@@ -1,0 +1,39 @@
+[
+  {
+    "source": "greenhouse",
+    "jobs": 2571,
+    "entry": 73,
+    "senior": 2243,
+    "unclear": 255,
+    "entry_pct": 2.8,
+    "median_body_chars": 6731,
+    "empty_bodies": 0,
+    "na_locations_pct": 65.8
+  },
+  {
+    "source": "lever",
+    "jobs": 0
+  },
+  {
+    "source": "ashby",
+    "jobs": 1139,
+    "entry": 28,
+    "senior": 758,
+    "unclear": 353,
+    "entry_pct": 2.5,
+    "median_body_chars": 6585,
+    "empty_bodies": 0,
+    "na_locations_pct": 73.2
+  },
+  {
+    "source": "themuse",
+    "jobs": 60,
+    "entry": 58,
+    "senior": 0,
+    "unclear": 2,
+    "entry_pct": 96.7,
+    "median_body_chars": 6885,
+    "empty_bodies": 0,
+    "na_locations_pct": 26.7
+  }
+]
