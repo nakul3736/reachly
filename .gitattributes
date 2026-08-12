@@ -1,0 +1,23 @@
+# Normalise line endings so the repository is identical on Windows, macOS and
+# Linux — and so git stops warning about LF to CRLF conversion on every commit.
+* text=auto eol=lf
+
+# Windows-only scripts need CRLF to run.
+*.ps1  text eol=crlf
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# Binary — never convert, never diff as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.docx binary
+*.woff  binary
+*.woff2 binary
+
+# Lock files are generated; collapse them in diffs and reviews.
+package-lock.json  linguist-generated=true -diff
+skills-lock.json   linguist-generated=true -diff
