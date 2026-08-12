@@ -1,0 +1,33 @@
+# Development environment.
+#
+# Right now this brings up Postgres only — the api and web services are added
+# once those applications exist, so that `docker compose up` is never broken.
+# The judge-facing keyless path (DEMO_MODE) lands with those services.
+#
+#   docker compose up -d        start
+#   docker compose logs -f db   follow
+#   docker compose down         stop, keep data
+#   docker compose down -v      stop, delete data
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: reachly-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: reachly
+      POSTGRES_PASSWORD: reachly_dev_only
+      POSTGRES_DB: reachly
+    ports:
+      # 55432 on the host to avoid colliding with any local Postgres.
+      - "55432:5432"
+    volumes:
+      - reachly_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reachly -d reachly"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  reachly_pgdata:

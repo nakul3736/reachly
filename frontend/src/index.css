@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* Design tokens. The source of truth for these choices, and the reasoning
+   behind them, is .kiro/steering/frontend.md — change that first.
+
+   The two signal colours are functional, not decorative: `confirmed` and
+   `inferred` must never be mistaken for one another, because the product's
+   central promise is that it never presents a guess as a fact. */
+
+@theme {
+  --color-ink: #101826;
+  --color-slate: #4a5568;
+  --color-blueprint: #eef2f6;
+  --color-paper: #ffffff;
+  --color-rule: #d7dee7;
+
+  --color-confirmed: #0f766e;
+  --color-inferred: #b45309;
+  --color-closed: #8a94a6;
+
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-receipt: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-card: 4px;
+  --radius-chip: 2px;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-blueprint);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Keyboard focus must always be visible — quality floor, not decoration. */
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

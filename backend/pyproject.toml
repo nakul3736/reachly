@@ -1,0 +1,87 @@
+[project]
+name = "reachly-backend"
+version = "0.1.0"
+description = "Reachly — job application pipeline for new graduates"
+requires-python = ">=3.13"
+
+# Versions are pinned deliberately. A build that changes behaviour because a
+# transitive dependency moved is not a debugging problem worth having during a
+# twelve-day project.
+dependencies = [
+    # web
+    "fastapi==0.118.0",
+    "uvicorn[standard]==0.37.0",
+    "python-multipart==0.0.20",
+
+    # database
+    "sqlalchemy[asyncio]==2.0.43",
+    "asyncpg==0.30.0",
+    "alembic==1.16.5",
+    "greenlet==3.2.4",
+
+    # config and validation
+    "pydantic==2.11.9",
+    "pydantic-settings==2.10.1",
+    "email-validator==2.3.0",
+
+    # auth — bcrypt used directly rather than via passlib, which breaks against
+    # bcrypt >= 4.1 on recent Pythons
+    "bcrypt==4.3.0",
+    "pyjwt==2.10.1",
+
+    # outbound http
+    "httpx==0.28.1",
+
+    # documents
+    "pdfplumber==0.11.7",
+    "python-docx==1.2.0",
+
+    # deterministic matching (ADR 0003)
+    "rapidfuzz==3.14.1",
+    "rank-bm25==0.2.2",
+
+    # inference provider (ADR 0002)
+    "google-genai==1.39.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.2",
+    "pytest-asyncio==1.2.0",
+    "pytest-cov==7.0.0",
+    "pytest-env==1.1.5",
+    "ruff==0.13.2",
+    "mypy==1.18.2",
+]
+
+[tool.ruff]
+line-length = 96
+target-version = "py313"
+src = ["app"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "S", "RUF"]
+ignore = [
+    "S101",  # assert is fine in tests
+    "B008",  # FastAPI Depends() in defaults is the documented pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/tests/*" = ["S105", "S106"]  # hardcoded test credentials are intentional
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["app/tests"]
+# Tests must never reach the network — see .kiro/steering/testing.md
+env = ["DEMO_MODE=true"]
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.13"
+warn_unused_ignores = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["pdfplumber.*", "docx.*", "rank_bm25.*"]
+ignore_missing_imports = true
