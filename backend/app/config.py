@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     db_max_overflow: int = 2
 
+    # The documented demo account, per Rule 17. The email has a default because it is
+    # published in the README anyway; the password deliberately does not. A fallback
+    # would ship a known credential to every deployment that forgot to set one,
+    # including any that later holds a real person's data. Seeding refuses without it;
+    # the application still boots without it, because seeding is a separate command.
+    demo_student_email: str = "demo@reachly.app"
+    demo_student_password: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

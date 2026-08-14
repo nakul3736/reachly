@@ -33,9 +33,9 @@ def test_every_variant_retains_its_skills_in_the_text(name: str) -> None:
     text = extract_text(RESUME_VARIANTS[name]).casefold()
 
     expected = {
-        "sample_resume": ["python", "fastapi", "postgresql"],
-        "sample_resume_word_like": ["go", "kubernetes", "terraform"],
-        "sample_resume_plain": ["ruby", "rails", "rspec"],
+        "latex_like": ["python", "fastapi", "postgresql"],
+        "word_like": ["go", "kubernetes", "terraform"],
+        "plain": ["ruby", "rails", "rspec"],
     }[name]
 
     for skill in expected:
@@ -63,7 +63,7 @@ def test_the_variants_do_not_share_a_layout() -> None:
             if line.strip() == line.strip().upper() and len(line.strip()) > 3
         )
 
-    assert marked_bullets(texts["sample_resume"]) > 0
-    assert marked_bullets(texts["sample_resume_plain"]) == 0
-    assert upper_case_headings(texts["sample_resume_word_like"]) > 0
-    assert upper_case_headings(texts["sample_resume"]) == 0
+    assert marked_bullets(texts["latex_like"]) > 0
+    assert marked_bullets(texts["plain"]) == 0
+    assert upper_case_headings(texts["word_like"]) > 0
+    assert upper_case_headings(texts["latex_like"]) == 0

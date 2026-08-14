@@ -39,9 +39,15 @@ and the PDF format is specified well enough to emit directly.
 
 from pathlib import Path
 
-FIXTURE_DIR = (
-    Path(__file__).resolve().parents[1] / "backend" / "app" / "tests" / "fixtures"
-)
+_BACKEND = Path(__file__).resolve().parents[1] / "backend" / "app"
+
+# The primary resume is a *product* asset, not only a test fixture: DEMO_MODE serves it
+# and the seeded demo account is built from it, so it lives with the adapters rather than
+# under tests. App code must not import from the test package.
+DEMO_RESUME = _BACKEND / "adapters" / "fixtures" / "demo_resume.pdf"
+
+# The other layouts exist only to stop the parser overfitting, so they stay test-only.
+VARIANT_DIR = _BACKEND / "tests" / "fixtures"
 
 # WinAnsi octal escape for the bullet glyph.
 BULLET = r"\225"
@@ -112,9 +118,8 @@ PLAIN: list[tuple[str, str]] = [
 ]
 
 VARIANTS: dict[str, list[tuple[str, str]]] = {
-    "sample_resume": LATEX_LIKE,
-    "sample_resume_word_like": WORD_LIKE,
-    "sample_resume_plain": PLAIN,
+    "resume_word_like": WORD_LIKE,
+    "resume_plain": PLAIN,
 }
 
 
@@ -164,8 +169,12 @@ def build_pdf(lines: list[tuple[str, str]]) -> bytes:
 
 
 if __name__ == "__main__":
-    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    DEMO_RESUME.parent.mkdir(parents=True, exist_ok=True)
+    DEMO_RESUME.write_bytes(build_pdf(LATEX_LIKE))
+    print(f"wrote {DEMO_RESUME.relative_to(Path.cwd())} ({DEMO_RESUME.stat().st_size} bytes)")
+
+    VARIANT_DIR.mkdir(parents=True, exist_ok=True)
     for name, lines in VARIANTS.items():
-        target = FIXTURE_DIR / f"{name}.pdf"
+        target = VARIANT_DIR / f"{name}.pdf"
         target.write_bytes(build_pdf(lines))
-        print(f"wrote {target.name} ({target.stat().st_size} bytes)")
+        print(f"wrote {target.relative_to(Path.cwd())} ({target.stat().st_size} bytes)")
