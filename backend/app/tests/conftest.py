@@ -13,9 +13,10 @@ from collections.abc import AsyncIterator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.models  # noqa: F401  — registers every table on Base.metadata
-from app.db import Base, dispose_engine, get_engine
+from app.db import Base, dispose_engine, get_engine, get_session_factory
 from app.main import app as fastapi_app
 
 
@@ -45,3 +46,16 @@ async def client() -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=fastapi_app)
     async with AsyncClient(transport=transport, base_url="http://test") as http_client:
         yield http_client
+
+
+@pytest.fixture
+async def session() -> AsyncIterator[AsyncSession]:
+    """A session for asserting directly against rows.
+
+    Used sparingly. Most behaviour belongs at the HTTP seam, but a few invariants are
+    about what is in the database rather than what the API returns — that bytes are
+    stored in a column rather than a filesystem path, for instance, which an API
+    round trip cannot distinguish while the development disk still exists.
+    """
+    async with get_session_factory()() as db_session:
+        yield db_session

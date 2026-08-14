@@ -46,6 +46,36 @@ class NotAuthenticated(DomainError):
     message = "Sign in to continue."
 
 
+class ResumeNotFound(DomainError):
+    """Also raised for a resume owned by someone else.
+
+    A 403 would confirm the row exists, which is itself something the caller should
+    not learn from a guessed id.
+    """
+
+    status_code = 404
+    code = "resume_not_found"
+    message = "That resume does not exist."
+
+
+class ResumeTooLarge(DomainError):
+    status_code = 413
+    code = "resume_too_large"
+    message = "That file is larger than 5 MB. Most resumes are well under 1 MB."
+
+
+class UnsupportedResumeFormat(DomainError):
+    """Raised when the bytes are not a PDF, whatever the file is called.
+
+    The message names the likely cause rather than restating the rule, because a
+    student who uploaded a .docx needs to know what to do next.
+    """
+
+    status_code = 415
+    code = "unsupported_resume_format"
+    message = "That file is not a PDF. Export your resume as PDF and upload it again."
+
+
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def _handle(_: Request, error: Exception) -> JSONResponse:
