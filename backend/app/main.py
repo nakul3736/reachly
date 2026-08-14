@@ -4,7 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI
 
+from app.api import auth
 from app.db import database_is_reachable, dispose_engine
+from app.errors import register_error_handlers
 
 
 @asynccontextmanager
@@ -21,6 +23,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Reachly", version="0.1.0", lifespan=lifespan)
+register_error_handlers(app)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -41,4 +44,5 @@ async def health(
     }
 
 
+router.include_router(auth.router)
 app.include_router(router)

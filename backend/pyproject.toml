@@ -78,6 +78,8 @@ testpaths = ["app/tests"]
 env = [
     "DEMO_MODE=true",
     "DATABASE_URL=postgresql+asyncpg://reachly:reachly_dev_only@localhost:55432/reachly",
+    # Test-only signing key. Real deployments have no default — see app/config.py.
+    "JWT_SECRET=test-only-signing-key-not-used-by-any-deployment",
 ]
 filterwarnings = ["error::DeprecationWarning"]
 

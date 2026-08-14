@@ -22,6 +22,11 @@ class Settings(BaseSettings):
 
     database_url: str
 
+    # No default: a signing key with a fallback means every deployment that forgets
+    # to set it shares one, and tokens forged against one work everywhere.
+    jwt_secret: str
+    jwt_expire_minutes: int = 10080  # one week — a job hunt is not a banking session
+
     # Aiven's free tier does not document its connection limit, so the pool is
     # sized conservatively and deliberately. See ADR 0008.
     db_pool_size: int = 5
