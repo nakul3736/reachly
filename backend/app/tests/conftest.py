@@ -9,7 +9,9 @@ matters more here: the ownership tests in this feature are the ones that would b
 worthless if state leaked between cases.
 """
 
+import os
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -59,3 +61,33 @@ async def session() -> AsyncIterator[AsyncSession]:
     """
     async with get_session_factory()() as db_session:
         yield db_session
+
+
+REAL_RESUME_ENV_VAR = "REACHLY_REAL_RESUME_PDF"
+
+
+@pytest.fixture
+def real_resume_pdf() -> bytes:
+    """A genuine resume PDF from outside the repository, or skip.
+
+    Tests using this validate extraction against real output — the kind of document a
+    student actually uploads, produced by LaTeX or Word rather than by our own
+    generator, which can only contain the mess we thought to put in it.
+
+    The file is deliberately **not** in the repository. This repository is public, and a
+    real resume carries a name, phone number and email address. Point the environment
+    variable at a file anywhere outside the project:
+
+        $env:REACHLY_REAL_RESUME_PDF = "C:\\path\\to\\resume.pdf"
+
+    When it is unset these tests skip rather than fail, so a fresh clone and CI both
+    pass. `pytest -rs` lists them as skipped with this reason, so a skip is never
+    mistaken for a pass.
+    """
+    configured = os.environ.get(REAL_RESUME_ENV_VAR)
+    if not configured:
+        pytest.skip(f"{REAL_RESUME_ENV_VAR} is not set")
+    path = Path(configured)
+    if not path.is_file():
+        pytest.skip(f"{REAL_RESUME_ENV_VAR} points at a missing file: {path}")
+    return path.read_bytes()

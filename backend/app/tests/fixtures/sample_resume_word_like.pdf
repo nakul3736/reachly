@@ -1,0 +1,93 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 775 >>
+stream
+BT
+14 TL
+50 742 Td
+/F2 16 Tf
+(Priya Raman) Tj
+T*
+/F1 10 Tf
+(priya.raman@example.edu) Tj
+T*
+/F1 10 Tf
+(Toronto, ON) Tj
+T*
+/F2 11 Tf
+(TECHNICAL SKILLS) Tj
+T*
+/F1 10 Tf
+(Go) Tj
+T*
+/F1 10 Tf
+(Kubernetes) Tj
+T*
+/F1 10 Tf
+(Terraform) Tj
+T*
+/F1 10 Tf
+(Prometheus) Tj
+T*
+/F2 11 Tf
+(WORK EXPERIENCE) Tj
+T*
+/F1 10 Tf
+(Beacon Freight Systems) Tj
+T*
+/F2 11 Tf
+(Platform Engineering Co-op) Tj
+T*
+/F1 10 Tf
+(May 2025 to December 2025) Tj
+T*
+/F1 10 Tf
+(- Cut deployment time from 25 minutes to 4 by replacing the hand-rolled) Tj
+T*
+/F1 10 Tf
+(  release script with a reusable pipeline template.) Tj
+T*
+/F1 10 Tf
+(- Wrote the runbook the on-call rotation now uses.) Tj
+T*
+/F2 11 Tf
+(EDUCATION) Tj
+T*
+/F1 10 Tf
+(University of Toronto) Tj
+T*
+/F1 10 Tf
+(BSc Computer Engineering, 2026) Tj
+T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000001077 00000 n 
+0000001174 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1276
+%%EOF

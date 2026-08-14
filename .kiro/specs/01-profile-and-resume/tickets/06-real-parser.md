@@ -25,4 +25,25 @@ on a fixture.
 - [ ] A model response that is malformed or missing required fields raises the parse
       failure error rather than storing partial output
 - [ ] Extracted text is not truncated in a way that silently drops later roles
+
+### Generality — the parser must not be tuned to one layout
+
+Added after spike 002. That spike examined a single real resume, produced by LaTeX. Any
+parser validated only against it is tuned to LaTeX whether or not that was intended, and
+the tuning is invisible: every test passes, and the first failure is a real student whose
+resume came out of Word. These criteria exist to make that failure loud and early.
+
+- [ ] Parses all three committed variants — `sample_resume` (title-case headings, bullet
+      glyphs, date on the title line), `sample_resume_word_like` (upper-case headings,
+      hyphen bullets, employer before title, date on its own line), and
+      `sample_resume_plain` (no bullet markers at all) — into populated experience entries
+- [ ] A wrapped bullet is one bullet in every variant, never split with its tail promoted
+      to a bullet of its own
+- [ ] No rule keys on a specific employer, institution, or wording found in any fixture
+- [ ] Passes against a real resume supplied via `REACHLY_REAL_RESUME_PDF`, and those tests
+      skip rather than fail when it is unset, so a fresh clone and CI both pass
+- [ ] Nothing in the parsed result is absent from `raw_text` — the parse-time form of
+      ADR 0006, since structuring is where a model could invent a skill the student does
+      not have, and everything downstream would then trust it
+
 - [ ] `ruff check` and `mypy` pass

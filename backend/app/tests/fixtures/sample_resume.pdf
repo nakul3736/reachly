@@ -1,0 +1,96 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 1098 >>
+stream
+BT
+14 TL
+50 742 Td
+/F2 16 Tf
+(Alex Rivera) Tj
+T*
+/F1 10 Tf
+(alex.rivera@example.edu | \(555\) 0100 | Halifax, NS) Tj
+T*
+/F2 11 Tf
+(Skills) Tj
+T*
+/F1 10 Tf
+(Languages: Python, TypeScript, SQL, Java) Tj
+T*
+/F1 10 Tf
+(Frameworks: FastAPI, React, PostgreSQL, Docker) Tj
+T*
+/F1 10 Tf
+(Practices: REST APIs, CI/CD, Test-Driven Development) Tj
+T*
+/F2 11 Tf
+(Experience) Tj
+T*
+/F2 11 Tf
+(Software Developer Intern    January 2026 - Present) Tj
+T*
+/F1 10 Tf
+(Northwind Analytics) Tj
+T*
+/F1 10 Tf
+(\225 Rebuilt the nightly ingestion job to stream records instead of) Tj
+T*
+/F1 10 Tf
+(   buffering them, cutting peak memory use by 60 percent.) Tj
+T*
+/F1 10 Tf
+(\225 Added integration tests around the billing export.) Tj
+T*
+/F2 11 Tf
+(Web Developer Intern    Aug 2023) Tj
+T*
+/F1 10 Tf
+(Lakeside Robotics) Tj
+T*
+/F1 10 Tf
+(\225 Built an internal dashboard in React used by the support team.) Tj
+T*
+/F1 10 Tf
+(\225 Migrated a legacy jQuery form to a typed React component.) Tj
+T*
+/F2 11 Tf
+(Education) Tj
+T*
+/F1 10 Tf
+(Dalhousie University) Tj
+T*
+/F1 10 Tf
+(Bachelor of Computer Science, expected 2027) Tj
+T*
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000001401 00000 n 
+0000001498 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1600
+%%EOF
