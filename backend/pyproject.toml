@@ -72,8 +72,13 @@ ignore = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["app/tests"]
-# Tests must never reach the network — see .kiro/steering/testing.md
-env = ["DEMO_MODE=true"]
+# Tests must never reach an external API — see .kiro/steering/testing.md.
+# The local Postgres from docker-compose.yml is not an external API; reachability
+# is behaviour this project owns and must assert on.
+env = [
+    "DEMO_MODE=true",
+    "DATABASE_URL=postgresql+asyncpg://reachly:reachly_dev_only@localhost:55432/reachly",
+]
 filterwarnings = ["error::DeprecationWarning"]
 
 [tool.mypy]
