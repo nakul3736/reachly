@@ -9,6 +9,7 @@ Tables arrive with the features that read them, per
 queries is a guess awaiting correction.
 """
 
+from app.models.student import Student
 from app.models.user import User
 
-__all__ = ["User"]
+__all__ = ["Student", "User"]

@@ -77,7 +77,11 @@ testpaths = ["app/tests"]
 # is behaviour this project owns and must assert on.
 env = [
     "DEMO_MODE=true",
-    "DATABASE_URL=postgresql+asyncpg://reachly:reachly_dev_only@localhost:55432/reachly",
+    # A separate database from the one migrations target. The test fixture drops every
+    # table between tests, which against the dev database would leave alembic_version
+    # claiming head with no tables present — and autogenerate would then emit a
+    # migration recreating tables that already exist in real deployments.
+    "DATABASE_URL=postgresql+asyncpg://reachly:reachly_dev_only@localhost:55432/reachly_test",
     # Test-only signing key. Real deployments have no default — see app/config.py.
     "JWT_SECRET=test-only-signing-key-not-used-by-any-deployment",
 ]

@@ -23,6 +23,10 @@ services:
       - "55432:5432"
     volumes:
       - reachly_pgdata:/var/lib/postgresql/data
+      # Creates the separate test database on first initialisation. Runs only when
+      # the data volume is empty — after `docker compose down -v`, or on a fresh
+      # clone. See the comment in the script for why the separation matters.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U reachly -d reachly"]
       interval: 5s

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import EmailAlreadyRegistered, InvalidCredentials
+from app.models.student import Student
 from app.models.user import User
 from app.security import hash_password, verify_password
 
@@ -18,9 +19,18 @@ def normalise_email(email: str) -> str:
 
 
 async def register(session: AsyncSession, email: str, password: str) -> User:
+    """Create the account and its profile in one transaction.
+
+    Both or neither. Creating the profile lazily on first write would mean every
+    later feature has to cope with an authenticated user who has no student row.
+    """
     user = User(email=normalise_email(email), password_hash=hash_password(password))
     session.add(user)
     try:
+        # Flush rather than commit: this assigns the id needed for the profile
+        # without ending the transaction, so a failure below rolls back both rows.
+        await session.flush()
+        session.add(Student(user_id=user.id))
         await session.commit()
     except IntegrityError as exc:
         # Relies on the unique constraint rather than a prior SELECT, so two

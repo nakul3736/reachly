@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from app.api import auth
+from app.api import auth, students
 from app.db import database_is_reachable, dispose_engine
 from app.errors import register_error_handlers
 
@@ -45,4 +45,5 @@ async def health(
 
 
 router.include_router(auth.router)
+router.include_router(students.router)
 app.include_router(router)
