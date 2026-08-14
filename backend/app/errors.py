@@ -58,6 +58,31 @@ class ResumeNotFound(DomainError):
     message = "That resume does not exist."
 
 
+class NoActiveResume(DomainError):
+    """The student has not uploaded a resume yet.
+
+    Distinct from a resume that parsed to nothing. One needs an upload prompt, the
+    other needs an explanation — showing an empty resume for either would tell the
+    student nothing about which situation they are in.
+    """
+
+    status_code = 404
+    code = "no_active_resume"
+    message = "Upload a resume first."
+
+
+class ResumeNotParsed(DomainError):
+    """The version exists but has no structured result.
+
+    Reached by a version stored before parsing, or one whose parse failed. Never
+    signalled by returning an empty resume.
+    """
+
+    status_code = 409
+    code = "resume_not_parsed"
+    message = "That resume has not been read yet. Upload it again to retry."
+
+
 class ResumeTooLarge(DomainError):
     status_code = 413
     code = "resume_too_large"

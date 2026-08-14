@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resume import ResumeMaster
-from app.tests.fixtures.pdf_bytes import MINIMAL_PDF
+from app.tests.fixtures.pdf_bytes import RECORDED_RESUME_PDF
 
 REGISTER = "/api/v1/auth/register"
 RESUMES = "/api/v1/resumes"
@@ -25,7 +25,9 @@ async def _auth(client: AsyncClient, email: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def _upload_args(content: bytes = MINIMAL_PDF, name: str = "resume.pdf") -> dict[str, object]:
+def _upload_args(
+    content: bytes = RECORDED_RESUME_PDF, name: str = "resume.pdf"
+) -> dict[str, object]:
     return {"files": {"file": (name, content, "application/pdf")}}
 
 
@@ -52,7 +54,7 @@ async def test_the_earlier_version_is_still_retrievable(client: AsyncClient) -> 
 
     response = await client.get(f"{RESUMES}/{first_id}/file", headers=headers)
     assert response.status_code == 200
-    assert response.content == MINIMAL_PDF
+    assert response.content == RECORDED_RESUME_PDF
 
 
 async def test_the_newest_upload_is_the_active_one(client: AsyncClient) -> None:

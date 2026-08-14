@@ -3,9 +3,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Header, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.adapters.resume_parser import get_resume_parser
 from app.api.auth import CurrentUser
 from app.db import get_session
-from app.errors import ResumeNotFound, ResumeTooLarge
+from app.domain.parsed_resume import ParsedResume
+from app.errors import NoActiveResume, ResumeNotFound, ResumeTooLarge
 from app.schemas.resume import ResumeVersionSummary
 from app.services import resume_service, student_service
 from app.services.resume_service import MAX_RESUME_BYTES
@@ -53,19 +55,46 @@ async def upload_resume(
     file: Annotated[UploadFile, File()],
     content_length: Annotated[int | None, Header()] = None,
 ) -> ResumeVersionSummary:
-    """Store an upload as a new version.
+    """Store an upload as a new version, parsed.
 
-    Validation happens before anything is written, so a rejected upload leaves the
-    student's existing active resume exactly as it was and does not consume a version
-    number. A gap in the numbering is a question the student cannot answer.
+    Validation and parsing both happen before anything is written, so a rejected or
+    unparseable upload leaves the student's existing active resume exactly as it was and
+    does not consume a version number. A gap in the numbering is a question the student
+    cannot answer, and an active resume containing nothing is worse than no resume at
+    all — tailoring would silently have no evidence to draw on.
     """
     student = await student_service.get_by_user_id(session, user.id)
     data = await _read_within_cap(file, content_length)
     resume_service.validate_pdf(data)
+    parsed = await get_resume_parser().parse(data)
     resume = await resume_service.store_new_version(
-        session, student.id, file.filename or "resume.pdf", data
+        session, student.id, file.filename or "resume.pdf", data, parsed
     )
     return ResumeVersionSummary.model_validate(resume)
+
+
+@router.get("/parsed", response_model=ParsedResume)
+async def read_active_parsed_resume(user: CurrentUser, session: SessionDep) -> ParsedResume:
+    """The structured form of the active resume.
+
+    Declared before `/{resume_id}/parsed` so the literal path wins the match.
+    """
+    student = await student_service.get_by_user_id(session, user.id)
+    active = await resume_service.get_active(session, student.id)
+    if active is None:
+        raise NoActiveResume
+    return resume_service.parsed_of(active)
+
+
+@router.get("/{resume_id}/parsed", response_model=ParsedResume)
+async def read_parsed_resume(
+    resume_id: int, user: CurrentUser, session: SessionDep
+) -> ParsedResume:
+    student = await student_service.get_by_user_id(session, user.id)
+    resume = await resume_service.get_owned(session, student.id, resume_id)
+    if resume is None:
+        raise ResumeNotFound
+    return resume_service.parsed_of(resume)
 
 
 @router.get("", response_model=list[ResumeVersionSummary])

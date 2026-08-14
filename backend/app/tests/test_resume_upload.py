@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resume import ResumeMaster
-from app.tests.fixtures.pdf_bytes import MINIMAL_PDF
+from app.tests.fixtures.pdf_bytes import RECORDED_RESUME_PDF
 
 REGISTER = "/api/v1/auth/register"
 RESUMES = "/api/v1/resumes"
@@ -23,7 +23,9 @@ async def _auth(client: AsyncClient, email: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def _upload_args(content: bytes = MINIMAL_PDF, name: str = "resume.pdf") -> dict[str, object]:
+def _upload_args(
+    content: bytes = RECORDED_RESUME_PDF, name: str = "resume.pdf"
+) -> dict[str, object]:
     return {"files": {"file": (name, content, "application/pdf")}}
 
 
@@ -88,8 +90,8 @@ async def test_the_original_bytes_are_stored_in_postgres(
 
     stored = (await session.execute(select(ResumeMaster))).scalar_one()
 
-    assert stored.pdf_bytes == MINIMAL_PDF
-    assert stored.byte_size == len(MINIMAL_PDF)
+    assert stored.pdf_bytes == RECORDED_RESUME_PDF
+    assert stored.byte_size == len(RECORDED_RESUME_PDF)
 
 
 async def test_the_original_file_can_be_downloaded_unchanged(client: AsyncClient) -> None:
@@ -100,7 +102,7 @@ async def test_the_original_file_can_be_downloaded_unchanged(client: AsyncClient
     response = await client.get(f"{RESUMES}/{resume_id}/file", headers=headers)
 
     assert response.status_code == 200
-    assert response.content == MINIMAL_PDF
+    assert response.content == RECORDED_RESUME_PDF
     assert response.headers["content-type"] == "application/pdf"
 
 

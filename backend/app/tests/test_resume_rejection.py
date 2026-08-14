@@ -13,8 +13,8 @@ from app.models.resume import ResumeMaster
 from app.services.resume_service import MAX_RESUME_BYTES
 from app.tests.fixtures.pdf_bytes import (
     HTML_MASQUERADING_AS_PDF,
-    MINIMAL_PDF,
     NOT_A_PDF,
+    RECORDED_RESUME_PDF,
     pdf_of_size,
 )
 
@@ -112,7 +112,7 @@ async def test_a_rejected_upload_leaves_the_active_resume_untouched(
     resume they can see in the list but that nothing uses, and no error would say so.
     """
     headers = await _auth(client, "ada@example.com")
-    await client.post(RESUMES, headers=headers, **_upload_args(MINIMAL_PDF))  # type: ignore[arg-type]
+    await client.post(RESUMES, headers=headers, **_upload_args(RECORDED_RESUME_PDF))  # type: ignore[arg-type]
 
     await client.post(RESUMES, headers=headers, **_upload_args(NOT_A_PDF))  # type: ignore[arg-type]
 
@@ -127,9 +127,9 @@ async def test_a_rejected_upload_does_not_consume_a_version_number(
 ) -> None:
     """Version numbers are shown to the student, so a gap is a question they cannot answer."""
     headers = await _auth(client, "ada@example.com")
-    await client.post(RESUMES, headers=headers, **_upload_args(MINIMAL_PDF))  # type: ignore[arg-type]
+    await client.post(RESUMES, headers=headers, **_upload_args(RECORDED_RESUME_PDF))  # type: ignore[arg-type]
     await client.post(RESUMES, headers=headers, **_upload_args(NOT_A_PDF))  # type: ignore[arg-type]
 
-    accepted = await client.post(RESUMES, headers=headers, **_upload_args(MINIMAL_PDF))  # type: ignore[arg-type]
+    accepted = await client.post(RESUMES, headers=headers, **_upload_args(RECORDED_RESUME_PDF))  # type: ignore[arg-type]
 
     assert accepted.json()["version"] == 2

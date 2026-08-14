@@ -6,7 +6,12 @@ No FastAPI imports — see `.kiro/steering/backend.md`.
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.errors import ResumeTooLarge, UnsupportedResumeFormat
+from app.domain.parsed_resume import ParsedResume
+from app.errors import (
+    ResumeNotParsed,
+    ResumeTooLarge,
+    UnsupportedResumeFormat,
+)
 from app.models.resume import ResumeMaster
 
 # Generous for a resume, small enough that a whole row still fits comfortably in a
@@ -32,7 +37,11 @@ def validate_pdf(data: bytes) -> None:
 
 
 async def store_new_version(
-    session: AsyncSession, student_id: int, filename: str, data: bytes
+    session: AsyncSession,
+    student_id: int,
+    filename: str,
+    data: bytes,
+    parsed: ParsedResume,
 ) -> ResumeMaster:
     """Store an upload as the next version and make it the active one.
 
@@ -40,6 +49,10 @@ async def store_new_version(
     transaction. A failure between the two would otherwise leave the student with no
     active resume — and nothing in the interface would explain why tailoring had
     stopped working.
+
+    Parsing happens *before* this is called, not inside it. A resume that could not be
+    parsed must not become the active version, so the failure has to occur before any
+    row is written rather than being rolled back afterwards.
 
     The uniqueness of `(student_id, version)` and of the active row are both enforced
     by the database, so this ordering is a correctness measure rather than the only
@@ -61,12 +74,34 @@ async def store_new_version(
         filename=filename,
         byte_size=len(data),
         pdf_bytes=data,
+        parsed_json=parsed.model_dump(mode="json"),
         is_active=True,
     )
     session.add(resume)
     await session.commit()
     await session.refresh(resume)
     return resume
+
+
+async def get_active(session: AsyncSession, student_id: int) -> ResumeMaster | None:
+    result = await session.execute(
+        select(ResumeMaster).where(
+            ResumeMaster.student_id == student_id, ResumeMaster.is_active
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def parsed_of(resume: ResumeMaster) -> ParsedResume:
+    """The structured resume stored against a version.
+
+    Raises `ResumeNotParsed` rather than returning an empty resume. A version stored
+    before parsing existed, or one whose parse failed, is a different fact from a resume
+    that genuinely contains nothing, and the student needs different guidance for each.
+    """
+    if not resume.parsed_json:
+        raise ResumeNotParsed
+    return ParsedResume.model_validate(resume.parsed_json)
 
 
 async def list_for_student(session: AsyncSession, student_id: int) -> list[ResumeMaster]:

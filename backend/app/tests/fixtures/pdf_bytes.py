@@ -46,6 +46,12 @@ HTML_MASQUERADING_AS_PDF = b"<!DOCTYPE html><html><body>Sign in to continue</bod
 
 
 def pdf_of_size(total_bytes: int) -> bytes:
-    """A valid-header PDF padded to an exact size, for testing the cap."""
-    padding = b"%" + b"a" * max(0, total_bytes - len(MINIMAL_PDF) - 1)
-    return MINIMAL_PDF + padding
+    """A readable PDF padded to an exact size, for testing the cap.
+
+    Padded after `%%EOF` so the document still parses — the trailing bytes are outside
+    the structure pdfplumber reads via the xref table. Built on the readable sample
+    rather than on `MINIMAL_PDF`, because upload now parses and a fixture with no text
+    layer would be refused as unreadable before the size check could be observed.
+    """
+    padding = b"\n%" + b"a" * max(0, total_bytes - len(RECORDED_RESUME_PDF) - 2)
+    return RECORDED_RESUME_PDF + padding
