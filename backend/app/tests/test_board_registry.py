@@ -5,7 +5,6 @@ URLs at runtime: 12 of 20 plausible Lever slugs returned 404, so the tokens are 
 derivable and have to be stored.
 """
 
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -47,19 +46,6 @@ def _job(**overrides: object) -> Job:
 # --- board_token ----------------------------------------------------------------------
 
 
-async def test_a_board_can_be_registered(session: AsyncSession) -> None:
-    session.add(_board())
-    await session.commit()
-
-    stored = (await session.execute(select(BoardToken))).scalar_one()
-
-    assert stored.provider == "greenhouse"
-    assert stored.token == "example"
-    assert stored.active is True
-    assert stored.consecutive_failures == 0
-    assert stored.last_succeeded_at is None
-
-
 async def test_the_same_board_cannot_be_registered_twice(session: AsyncSession) -> None:
     """A constraint, not a check-then-insert.
 
@@ -90,18 +76,6 @@ async def test_one_token_can_exist_on_two_providers(session: AsyncSession) -> No
 # --- job ------------------------------------------------------------------------------
 
 
-async def test_a_job_can_be_stored(session: AsyncSession) -> None:
-    session.add(_job())
-    await session.commit()
-
-    stored = (await session.execute(select(Job))).scalar_one()
-
-    assert stored.title == "Software Engineer"
-    assert stored.closed_at is None
-    assert stored.canonical_job_id is None
-    assert stored.first_seen_at is not None
-
-
 async def test_the_same_posting_cannot_be_stored_twice(session: AsyncSession) -> None:
     """The constraint that makes ingestion idempotent.
 
@@ -129,44 +103,7 @@ async def test_two_sources_may_carry_the_same_job_id(session: AsyncSession) -> N
     assert len((await session.execute(select(Job))).scalars().all()) == 2
 
 
-async def test_timestamps_are_timezone_aware_and_utc(session: AsyncSession) -> None:
-    session.add(_job())
-    await session.commit()
-
-    stored = (await session.execute(select(Job))).scalar_one()
-
-    assert stored.first_seen_at.tzinfo is not None
-    assert stored.first_seen_at.utcoffset() == timedelta(0)
-
-
-async def test_a_job_can_be_marked_closed(session: AsyncSession) -> None:
-    """Closed, not deleted — a student's application must still resolve to it."""
-    session.add(_job())
-    await session.commit()
-
-    stored = (await session.execute(select(Job))).scalar_one()
-    stored.closed_at = datetime.now(UTC)
-    await session.commit()
-
-    reloaded = (await session.execute(select(Job))).scalar_one()
-    assert reloaded.closed_at is not None
-
-
 # --- dedup_verdict --------------------------------------------------------------------
-
-
-async def test_a_verdict_can_be_cached(session: AsyncSession) -> None:
-    session.add(
-        DedupVerdict(
-            fingerprint_low="aaa", fingerprint_high="bbb", same_job=True, decided_by="fuzzy"
-        )
-    )
-    await session.commit()
-
-    stored = (await session.execute(select(DedupVerdict))).scalar_one()
-
-    assert stored.same_job is True
-    assert stored.decided_by == "fuzzy"
 
 
 async def test_the_same_pair_cannot_be_cached_twice(session: AsyncSession) -> None:

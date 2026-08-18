@@ -31,6 +31,7 @@ from app.models.resume import ResumeMaster
 from app.models.student import Student
 from app.models.user import User
 from app.security import hash_password
+from app.seed_boards import seed_boards
 
 
 class DemoCredentialsMissing(DomainError):
@@ -144,17 +145,27 @@ async def _main() -> int:
     Reports failure as a message and a non-zero exit code rather than a traceback. This
     runs as a deploy step, where a stack trace is noise and the exit code is what the
     surrounding script reads.
+
+    Boards are seeded before the demo account, and independently of it. The demo account
+    needs credentials supplied by the environment and legitimately fails without them; the
+    board registry needs nothing and is what makes the product show real jobs. Seeding
+    them together would mean a deployment without demo credentials also had an empty job
+    index, which is a much worse failure than a missing test login.
     """
+    boards = 0
     try:
         async with get_session_factory()() as session:
+            boards = (await seed_boards(session)).created
             result = await seed_demo_student(session)
     except DemoCredentialsMissing as error:
+        print(f"{boards} board(s) registered")
         print(f"seed failed: {error.message}", file=sys.stderr)
         return 1
     finally:
         await dispose_engine()
 
     verb = "created" if result.created else "already present"
+    print(f"{boards} board(s) registered")
     print(f"demo account {verb}: {result.email} ({result.resume_versions} resume version(s))")
     return 0
 
