@@ -8,7 +8,6 @@ against a recorded outcome — and so `DEMO_MODE` has something to substitute.
 import hashlib
 from typing import Protocol
 
-from app.config import get_settings
 from app.domain.parsed_resume import ParsedResume
 from app.errors import DomainError
 
@@ -67,11 +66,13 @@ def fingerprint(pdf_bytes: bytes) -> str:
 def get_resume_parser() -> ResumeParser:
     """The parser for the current configuration.
 
-    `DEMO_MODE` selects recorded outcomes, so the whole feature works with no API key —
-    which is the path judges use. The real implementation lands in ticket 06.
+    The same `RealResumeParser` in both modes. Only the inference client differs, so
+    `DEMO_MODE` still runs real extraction, real evidence checking and real identifier
+    derivation — a fixture that returned a finished result would skip the code most
+    likely to be wrong, and a judge running the demo path would be testing a different
+    program.
     """
-    from app.adapters.fixture_resume_parser import FixtureResumeParser
+    from app.adapters.llm_client import get_llm_client
+    from app.adapters.real_resume_parser import RealResumeParser
 
-    if get_settings().demo_mode:
-        return FixtureResumeParser()
-    return FixtureResumeParser()
+    return RealResumeParser(get_llm_client())

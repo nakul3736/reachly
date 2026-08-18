@@ -55,6 +55,16 @@ class Settings(BaseSettings):
     def allowed_origins(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
+    # Inference. Reachly carries its own provider per ADR 0002 — Kiro built this project
+    # and does not run inside it. No default key: outside DEMO_MODE a missing key is a
+    # configuration error, not a reason to quietly serve fixtures.
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-flash"
+
+    # Generous, because structuring a two-page resume is a single large completion and
+    # the alternative to waiting is failing an upload the student cannot retry cheaply.
+    llm_timeout_seconds: float = 60.0
+
 
 @lru_cache
 def get_settings() -> Settings:
