@@ -59,7 +59,13 @@ class Settings(BaseSettings):
     # and does not run inside it. No default key: outside DEMO_MODE a missing key is a
     # configuration error, not a reason to quietly serve fixtures.
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+
+    # Pinned, not `gemini-flash-latest`. Two reasons, both observed rather than assumed:
+    # `gemini-2.5-flash` now 404s with "no longer available to new users", so an unpinned
+    # guess goes stale; and in testing the moving alias returned 503 in the same minute
+    # that two pinned models returned 200. A judged window is the wrong time for the model
+    # to change underneath us.
+    gemini_model: str = "gemini-3.6-flash"
 
     # Generous, because structuring a two-page resume is a single large completion and
     # the alternative to waiting is failing an upload the student cannot retry cheaply.

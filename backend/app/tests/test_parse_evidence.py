@@ -201,6 +201,72 @@ async def test_duplicate_skills_are_collapsed(monkeypatch: pytest.MonkeyPatch) -
     assert parsed.skills == ["Python"]
 
 
+# --- grouped skill lines --------------------------------------------------------------
+
+
+async def test_a_grouped_skill_line_is_split_into_individual_skills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug that would have wrecked matching silently.
+
+    A real resume writes `Languages: Python, TypeScript`, and a model asked for skills
+    returns that whole line. Skill overlap is 40% of the match score, so comparing a job's
+    `Python` requirement against a stored `Languages: Python, TypeScript` matches nothing —
+    every score wrong, nothing visibly broken.
+    """
+    parsed = await _parse(
+        {"skills": ["Languages: Python, TypeScript"], "experience": [_GOOD_ROLE]},
+        monkeypatch,
+    )
+
+    assert parsed.skills == ["Python", "TypeScript"]
+
+
+def test_a_bracketed_qualifier_is_not_split() -> None:
+    """`AWS (lambda, IAM, VPC)` is one skill.
+
+    Splitting on every comma would yield `AWS (lambda` and `VPC)`, which are not skills and
+    would never match anything.
+    """
+    from app.adapters.real_resume_parser import _atomise_skill
+
+    assert _atomise_skill("Cloud: AWS (lambda, IAM, VPC), Docker") == [
+        "AWS (lambda, IAM, VPC)",
+        "Docker",
+    ]
+
+
+def test_a_plain_skill_is_left_alone() -> None:
+    from app.adapters.real_resume_parser import _atomise_skill
+
+    assert _atomise_skill("PostgreSQL") == ["PostgreSQL"]
+    assert _atomise_skill("Test-Driven Development") == ["Test-Driven Development"]
+
+
+def test_the_group_label_is_dropped_not_kept_as_a_skill() -> None:
+    from app.adapters.real_resume_parser import _atomise_skill
+
+    result = _atomise_skill("Frameworks & Libraries: Spring Boot, Node.js")
+
+    assert result == ["Spring Boot", "Node.js"]
+    assert not any("Frameworks" in skill for skill in result)
+
+
+async def test_split_skills_still_have_to_be_evidenced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Splitting does not become a way to smuggle inventions in.
+
+    Each token produced by the split is checked against the source independently, so a
+    model appending an extra item to a real group line gains nothing.
+    """
+    parsed = await _parse(
+        {"skills": ["Languages: Python, Rust"], "experience": [_GOOD_ROLE]}, monkeypatch
+    )
+
+    assert parsed.skills == ["Python"]
+
+
 # --- identifiers ----------------------------------------------------------------------
 
 

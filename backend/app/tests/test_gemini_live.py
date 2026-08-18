@@ -47,6 +47,20 @@ def _parser() -> RealResumeParser:
     )
 
 
+# Each document is parsed once per session and the result reused. Quota is the reason:
+# the free tier is generous per day but finite, and an earlier version of this file called
+# the model twice on every document — once to check the layout parsed and again to check
+# bullets were joined — which exhausted the day's allowance in two runs. Both facts are
+# properties of the same parse, so there is no reason to buy it twice.
+_PARSE_CACHE: dict[bytes, ParsedResume] = {}
+
+
+async def _parse_once(pdf_bytes: bytes) -> ParsedResume:
+    if pdf_bytes not in _PARSE_CACHE:
+        _PARSE_CACHE[pdf_bytes] = await _parser().parse(pdf_bytes)
+    return _PARSE_CACHE[pdf_bytes]
+
+
 def _assert_nothing_invented(parsed: ParsedResume) -> None:
     """Every claim traces to the source text.
 
@@ -76,7 +90,7 @@ async def test_gemini_parses_every_layout(variant: str) -> None:
     markers at all. Passing all three is evidence the model is reading the document
     instead of matching one layout.
     """
-    parsed = await _parser().parse(RESUME_VARIANTS[variant])
+    parsed = await _parse_once(RESUME_VARIANTS[variant])
 
     assert parsed.experience, f"{variant}: no experience extracted"
     assert parsed.skills, f"{variant}: no skills extracted"
@@ -94,7 +108,7 @@ async def test_gemini_joins_wrapped_bullets(variant: str) -> None:
     splits long bullets and promotes the tail. A fragment is recognisable by starting
     lower-case — a copied bullet starts with a capital.
     """
-    parsed = await _parser().parse(RESUME_VARIANTS[variant])
+    parsed = await _parse_once(RESUME_VARIANTS[variant])
 
     for entry in parsed.experience:
         for bullet in entry.bullets:
@@ -108,7 +122,7 @@ async def test_gemini_parses_a_real_resume(real_resume_pdf: bytes) -> None:
     Structural assertions only — never a name, employer or contact detail. Asserting on
     real personal content would put it in the repository by another route.
     """
-    parsed = await _parser().parse(real_resume_pdf)
+    parsed = await _parse_once(real_resume_pdf)
 
     assert len(parsed.experience) >= 2, "expected multiple roles in a real resume"
     assert len(parsed.skills) >= 5
@@ -123,7 +137,7 @@ async def test_gemini_keeps_real_dates_as_written(real_resume_pdf: bytes) -> Non
     back in one shape, the model normalised them — which is inventing precision the
     document does not contain.
     """
-    parsed = await _parser().parse(real_resume_pdf)
+    parsed = await _parse_once(real_resume_pdf)
 
     dates = [entry.dates for entry in parsed.experience if entry.dates]
     assert dates, "expected at least one date"

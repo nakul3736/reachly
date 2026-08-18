@@ -54,6 +54,9 @@ Rules, in order of importance:
    Never convert to a standard format, never infer a missing year, never guess an end date.
 4. ADD NOTHING. No skills the text does not list. No inferred seniority. No employer you
    worked out from context. Absent is a valid answer; invented is not.
+5. ONE SKILL PER ENTRY. Resumes group skills as "Languages: Java, Python, SQL". Return
+   "Java", "Python", "SQL" as separate entries and never the group label. Keep a bracketed
+   qualifier attached: "AWS (lambda, IAM)" is one skill, not three.
 
 Layouts vary. Section headings may be upper case or title case. Bullets may use a glyph,
 a hyphen, or nothing at all. The employer may come before or after the job title, and the
@@ -105,7 +108,7 @@ def _build(payload: dict[str, object], raw_text: str) -> ParsedResume:
     """Turn a model response into a `ParsedResume`, keeping only evidenced content."""
     experience = _experience(payload.get("experience"), raw_text)
     education = _education(payload.get("education"), raw_text)
-    skills = _evidenced_strings(payload.get("skills"), raw_text, kind="skill")
+    skills = _skills(payload.get("skills"), raw_text)
     summary = _string(payload.get("summary"))
 
     if summary and not appears_in(summary, raw_text):
@@ -185,6 +188,55 @@ def _education(value: object, raw_text: str) -> list[EducationEntry]:
             )
         )
     return entries
+
+
+def _atomise_skill(text: str) -> list[str]:
+    """Split a grouped skill line into individual skills.
+
+    Resumes very often write skills as `Languages: Java, Python, SQL`, and a model asked
+    for a skill list will happily return that whole line as one entry. Left alone it is
+    quietly destructive: skill overlap is 40% of the match score in ADR 0003, and
+    comparing a job's `Python` requirement against a stored `Languages: Java, Python, SQL`
+    matches nothing. Every score would be wrong, and nothing would look broken.
+
+    Done here rather than only in the prompt because it is a structural requirement, and
+    relying on prompt compliance for structure means one model revision away from silent
+    breakage. The prompt asks as well; this enforces.
+
+    Commas inside brackets are not separators — `AWS (lambda, IAM, VPC)` is one skill, and
+    splitting it would produce `AWS (lambda` and `VPC)`.
+    """
+    # Drop a leading group label: everything before the first colon, when what follows is
+    # substantial. A bare `C:` style skill is not realistic, but a short tail would be.
+    if ":" in text:
+        label, _, tail = text.partition(":")
+        if len(label) <= 40 and len(tail.strip()) > 2:
+            text = tail
+
+    parts: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in text:
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+        if char == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+
+    return [part.strip(" \t\u2022-") for part in parts if part.strip(" \t\u2022-")]
+
+
+def _skills(value: object, raw_text: str) -> list[str]:
+    """Atomic, evidenced, de-duplicated skills in the order given."""
+    candidates: list[str] = []
+    for item in _strings(value):
+        candidates.extend(_atomise_skill(item))
+    return _evidenced_strings(candidates, raw_text, kind="skill")
 
 
 def _evidenced_strings(value: object, raw_text: str, *, kind: str) -> list[str]:
