@@ -41,7 +41,16 @@ USER reachly
 
 EXPOSE 8000
 
-# Render supplies $PORT. Migrations run in the start command rather than here, so a
-# failed migration fails the deploy visibly instead of leaving a container that starts
-# against the wrong schema.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Render supplies $PORT.
+#
+# Three steps, with deliberately different failure behaviour:
+#
+# 1. Migrations must succeed. A failure here fails the deploy visibly, rather than
+#    leaving a container serving against the wrong schema.
+# 2. Seeding must not. Render's free tier gives no shell access, so this is the only
+#    way the demo account can exist — but a missing DEMO_STUDENT_PASSWORD should not
+#    stop the API serving. It is idempotent, so running it on every cold start costs
+#    one indexed SELECT once the account exists. It remains available as a standalone
+#    command for any environment that can run one.
+# 3. Then serve, replacing the shell so signals reach uvicorn.
+CMD ["sh", "-c", "alembic upgrade head && { python -m app.seed || echo 'demo seed skipped'; } && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
