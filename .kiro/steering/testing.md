@@ -51,3 +51,33 @@ ones nobody records.
 
 Adding an external call without a fixture in the same commit breaks `DEMO_MODE`,
 which is the path judges use. Treat it as a build failure.
+
+
+## Tests that need something the repository cannot contain
+
+Some properties can only be established against a real external thing: a genuine resume,
+or a real model. Both are used, and neither may break a fresh clone.
+
+The pattern, used twice so far:
+
+- **Gate on an environment variable and skip when it is absent**, with a reason naming the
+  variable. `pytest -rs` then lists the skip and its reason, so a skipped test is never
+  mistaken for a passing one.
+  - `REACHLY_REAL_RESUME_PDF` — a real resume, read from **outside** the repository. This
+    project is public and a real resume carries a name, phone number and email address.
+  - `GEMINI_LIVE_TESTS=1` plus `GEMINI_API_KEY` — tests that call the real model. Two
+    variables, so having a key configured for the application does not silently start
+    spending quota on every test run.
+
+- **Assert structural properties only** when the input is real personal data. Counts,
+  shapes, whether a date appears in the source. Never a name, an employer, or a contact
+  detail — asserting on real personal content puts it in the repository by another route.
+
+- **Buy an expensive result once.** Cache a live parse per document per session and assert
+  several properties against it. An earlier version called the model twice on one document
+  to check two properties of the same parse, and exhausted a day's free quota in two runs.
+
+- **Committed fixtures must disagree with each other.** One sample cannot show whether code
+  is general. The three resume variants differ in heading case, bullet marker, date position
+  and section order, and there is a test asserting they have not drifted into similarity —
+  because if they had, they would keep passing while testing nothing.

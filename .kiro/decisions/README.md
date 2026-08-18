@@ -18,6 +18,7 @@ rejected options are kept deliberately, because the reasoning is the useful part
 | [0007](0007-external-scheduler.md) | The daily job runs from an external trigger | Accepted |
 | [0008](0008-hosting-for-a-judged-window.md) | Hosting chosen for uptime across a fixed judging window | Accepted |
 | [0009](0009-vendored-vs-global-skills.md) | Vendor the skills we use, once their licence is verified | Accepted |
+| [0010](0010-demo-mode-is-the-deployed-default.md) | The deployed app runs in demo mode, on a pinned model | Accepted |
 
 ## Spikes
 
@@ -26,6 +27,7 @@ Empirical findings that drove a decision.
 | Spike | Question | Outcome |
 |---|---|---|
 | [001](spike-001-job-source-coverage.md) | Do the job sources actually carry entry-level roles? | Entry-level density on company boards is under 3%; the experience-fit filter is load-bearing and a role-family filter was added |
+| [002](spike-002-real-resume-structure.md) | Is `pdfplumber.extract_text()` enough to structure a resume? | Yes for text, but wrapped bullets carry no marker on the continuation line — line-based splitting would have broken provenance silently. Geometry-based parsing rejected as layout-specific |
 
 ## Format
 
