@@ -1,0 +1,16 @@
+# Keep the build context small, and keep local secrets out of the image entirely.
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Never copy real configuration into an image.
+.env
+.env.*
+!.env.example
+
+# Tests are not needed at runtime. The overfitting fixtures live here; the demo resume
+# does not — it is under app/adapters/fixtures because the seed and the demo parser use it.
+app/tests/

@@ -40,6 +40,21 @@ class Settings(BaseSettings):
     demo_student_email: str = "demo@reachly.app"
     demo_student_password: str | None = None
 
+    # Browsers block cross-origin requests, and the frontend is served from a different
+    # host than the API. Comma-separated so a single environment variable can carry the
+    # production origin alongside the local dev server.
+    cors_origins: str = "http://localhost:5173"
+
+    # Protects POST /internal/cron/{task}. No default: an unauthenticated endpoint that
+    # triggers board refreshes would let anyone drive our outbound request budget. See
+    # ADR 0007 — the scheduler is external because Render's free tier stops the process
+    # when idle, which silently kills any in-process timer.
+    cron_secret: str | None = None
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:

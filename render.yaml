@@ -1,0 +1,43 @@
+# Render service definition for the Reachly API.
+#
+# The database is deliberately NOT declared here. Render's free Postgres is deleted 30
+# days after creation, which would mean betting the judged window on a countdown — and
+# losing every uploaded resume when it expired. Reachly uses Aiven's free tier instead:
+# always on, no expiry, no suspend. See ADR 0008.
+#
+# Secrets are marked sync:false, which means Render prompts for them in the dashboard
+# rather than reading them from this file. Nothing secret belongs in a public repository.
+
+services:
+  - type: web
+    name: reachly-api
+    runtime: docker
+    plan: free
+    region: oregon
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+
+    # Free instances are stopped when idle and take ~50s to wake. The keep-alive
+    # workflow and cron-job.org both hit /internal/cron/keepalive to prevent a judge
+    # meeting a cold start. Two triggers because one silently failing would be invisible.
+    healthCheckPath: /api/v1/health
+
+    envVars:
+      - key: DEMO_MODE
+        value: "true"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+      - key: DEMO_STUDENT_EMAIL
+        value: demo@reachly.app
+      - key: DEMO_STUDENT_PASSWORD
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO

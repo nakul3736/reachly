@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual trigger, so a failure can be re-checked without an empty commit.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: reachly
+          POSTGRES_PASSWORD: reachly_dev_only
+          POSTGRES_DB: reachly
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U reachly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      # The compose file creates this on first volume init; the CI service container
+      # does not run those scripts, so it is created explicitly. Tests need a database
+      # separate from the one migrations target — they drop every table between tests,
+      # which against the migrated database would make autogenerate emit a migration
+      # recreating existing tables.
+      - name: Create the test database
+        env:
+          PGPASSWORD: reachly_dev_only
+        run: psql -h localhost -p 55432 -U reachly -d postgres -c 'CREATE DATABASE reachly_test OWNER reachly;'
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Types
+        run: mypy app
+
+      - name: Tests
+        run: pytest -q
+
+      # Catches a model changed without a migration. That drift is invisible locally
+      # until a deploy fails, because tests build their schema from the models.
+      - name: Migrations apply, and match the models
+        env:
+          DATABASE_URL: postgresql+asyncpg://reachly:reachly_dev_only@localhost:55432/reachly
+          JWT_SECRET: ci-only-not-a-real-secret
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+
+      # The fixtures are generated, so a drift between script and committed file would
+      # mean the tests and the documented generator disagree.
+      - name: Generated fixtures are up to date
+        working-directory: .
+        run: |
+          python scripts/make_sample_resume_pdf.py
+          git diff --exit-code -- backend/app
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Builds the production image so a Dockerfile mistake is caught here rather than
+      # in a Render deploy, where the feedback loop is minutes longer.
+      - name: Build the production image
+        run: docker build -t reachly-api:ci backend

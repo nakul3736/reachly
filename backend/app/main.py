@@ -3,8 +3,10 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, resumes, students
+from app.api import auth, cron, resumes, students
+from app.config import get_settings
 from app.db import database_is_reachable, dispose_engine
 from app.errors import register_error_handlers
 
@@ -24,6 +26,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Reachly", version="0.1.0", lifespan=lifespan)
 register_error_handlers(app)
+
+# The frontend is served from a different host than the API, so the browser needs the
+# API to name the origins it will accept. Explicit origins rather than "*", because
+# credentials are sent and a wildcard would forbid them anyway.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -48,3 +61,6 @@ router.include_router(auth.router)
 router.include_router(students.router)
 router.include_router(resumes.router)
 app.include_router(router)
+
+# Not under /api/v1: these are operational endpoints, not part of the student-facing API.
+app.include_router(cron.router)
