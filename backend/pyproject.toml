@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=80.9.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "reachly-backend"
 version = "0.1.0"
@@ -31,18 +35,23 @@ dependencies = [
 
     # outbound http
     "httpx==0.28.1",
-
     # documents
     "pdfplumber==0.11.7",
-    "python-docx==1.2.0",
 
     # deterministic matching (ADR 0003)
     "rapidfuzz==3.14.1",
     "rank-bm25==0.2.2",
-
-    # inference provider (ADR 0002)
-    "google-genai==1.39.1",
 ]
+
+# Declared explicitly rather than left to auto-discovery. Setuptools finds both `app` and
+# `migrations` at the top level and refuses to guess between them, which failed CI while
+# working locally — the local virtualenv was created before `migrations/` existed, so
+# discovery had only ever seen one candidate. A fresh clone failed identically.
+#
+# `migrations` is deliberately excluded: Alembic runs it from the working directory and
+# it is not an importable part of the application.
+[tool.setuptools]
+packages = ["app"]
 
 [project.optional-dependencies]
 dev = [
