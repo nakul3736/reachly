@@ -5,6 +5,7 @@ Adapters stay pure, and this decides what a fetch means.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -12,7 +13,8 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.adapters.job_sources import greenhouse
+from app.adapters.http import get_http_client
+from app.adapters.job_sources import ashby, greenhouse, lever, muse
 from app.domain.job_posting import RawPosting
 from app.domain.location import extract_location
 from app.domain.role_family import classify_role_family, classify_seniority
@@ -23,11 +25,20 @@ logger = logging.getLogger(__name__)
 
 _BOARD_URLS = {
     "greenhouse": "https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true",
+    "lever": "https://api.lever.co/v0/postings/{token}?mode=json",
+    "ashby": "https://api.ashbyhq.com/posting-api/job-board/{token}",
 }
 
-_PARSERS = {
+# Typed loosely on purpose: Lever returns a bare array where the other two return an object, so
+# there is no single payload type to promise. The adapters each know their own shape, and that
+# knowledge belongs in them rather than being flattened into a lowest common denominator here.
+_PARSERS: dict[str, Callable[..., list[RawPosting]]] = {
     "greenhouse": greenhouse.parse_greenhouse_board,
+    "lever": lever.parse_lever_board,
+    "ashby": ashby.parse_ashby_board,
 }
+
+_MUSE_URL = "https://www.themuse.com/api/public/jobs?page={page}&level=Entry%20Level"
 
 
 @dataclass
@@ -101,6 +112,10 @@ class RefreshSummary:
     # failures on purpose: a board nobody has tried is not a board that is broken, and
     # folding the two together would make the interface cry wolf.
     boards_skipped: int = 0
+    # The Muse, tracked apart from boards because it is not one. It covers every company from a
+    # single endpoint, so it has no token, no registry row, and its absence proves nothing.
+    aggregator_attempted: bool = False
+    aggregator_succeeded: bool = False
     created: int = 0
     updated: int = 0
 
@@ -128,7 +143,7 @@ async def refresh_all_boards(
 
     summary = RefreshSummary()
     owns_client = client is None
-    active_client = client or httpx.AsyncClient()
+    active_client = client or get_http_client()
 
     try:
         for board in boards:
@@ -148,6 +163,15 @@ async def refresh_all_boards(
                 summary.updated += result.updated
             else:
                 summary.boards_failed += 1
+        # The Muse last, and counted separately, because it is one endpoint for every company
+        # rather than a board per company. Folding it into the board counters would make
+        # "boards attempted" a number that does not correspond to any company, and story 28
+        # depends on those counts meaning something precise.
+        summary.aggregator_attempted = True
+        muse_result = await ingest_muse(session, client=active_client)
+        summary.aggregator_succeeded = muse_result.succeeded
+        summary.created += muse_result.created
+        summary.updated += muse_result.updated
     finally:
         if owns_client:
             await active_client.aclose()
@@ -161,6 +185,51 @@ async def refresh_all_boards(
         summary.updated,
     )
     return summary
+
+
+async def ingest_muse(
+    session: AsyncSession, *, client: httpx.AsyncClient, max_pages: int = muse.MAX_PAGES
+) -> IngestResult:
+    """Read the first few pages of The Muse's entry-level feed.
+
+    Not a board, and deliberately not in the board registry: The Muse is one endpoint covering
+    every company, so a per-company token would be a fiction. It is also an aggregator, which
+    changes two rules downstream — its postings are stored unverified, and their absence from a
+    later read proves nothing, so they expire on a timer instead of being swept.
+
+    Bounded at a handful of pages. The API reports 4,493 of them, roughly ninety thousand
+    postings, which no free host is ingesting in a request window. Pages come newest first, so a
+    bounded read takes the freshest slice rather than an arbitrary one.
+
+    A page that fails ends the walk instead of failing the whole ingest. Whatever earlier pages
+    returned is real and worth keeping, and the next run will start again from page one.
+    """
+    total = IngestResult(succeeded=True)
+    seen: set[str] = set()
+
+    for page in range(1, max_pages + 1):
+        try:
+            response = await client.get(_MUSE_URL.format(page=page), timeout=30.0)
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("muse page %d failed, stopping the walk: %s", page, exc)
+            break
+
+        postings = muse.parse_muse_page(payload)
+        if not postings:
+            break
+
+        result = await _upsert(session, postings, source=muse.SOURCE)
+        total.created += result.created
+        total.updated += result.updated
+        seen |= result.seen_source_ids
+
+        await session.commit()
+
+    total.seen_source_ids = frozenset(seen)
+    logger.info("muse: %d created, %d updated", total.created, total.updated)
+    return total
 
 
 async def _upsert(
@@ -193,6 +262,21 @@ async def _upsert(
         role_family = classify_role_family(posting.title)
         seniority = str(classify_seniority(posting.title))
 
+        # A provider's own claim is consulted only where our rules found nothing.
+        #
+        # The Muse marking "Security Officer" as entry level is a fact no title rule can derive,
+        # and discarding it would throw away the one thing that source is better at. But the
+        # hint never overrides a rule that did fire, because an aggregator would then be able to
+        # relabel a senior role into a graduate's feed — and the senior rules are the ones
+        # protecting the student's time.
+        if seniority == "unknown" and posting.seniority_hint:
+            seniority = posting.seniority_hint
+
+        is_remote = (
+            posting.is_remote_hint
+            if posting.is_remote_hint is not None
+            else location.is_remote
+        )
         if row is None:
             session.add(
                 Job(
@@ -202,7 +286,7 @@ async def _upsert(
                     title=posting.title,
                     location_raw=posting.location_raw,
                     country=location.country,
-                    is_remote=location.is_remote,
+                    is_remote=is_remote,
                     role_family=role_family,
                     seniority=seniority,
                     description=posting.description,
@@ -229,7 +313,7 @@ async def _upsert(
         # Engineer" changes who the posting is for. Leaving the old classification would keep
         # it in a graduate's feed after it stopped belonging there.
         row.country = location.country
-        row.is_remote = location.is_remote
+        row.is_remote = is_remote
         row.role_family = role_family
         row.seniority = seniority
 

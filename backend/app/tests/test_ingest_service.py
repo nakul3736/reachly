@@ -185,6 +185,65 @@ async def test_an_empty_board_succeeds_with_nothing_created(session: AsyncSessio
     assert board.last_succeeded_at is not None
 
 
+async def test_an_extremely_long_location_does_not_break_ingestion(
+    session: AsyncSession,
+) -> None:
+    """A real Muse posting listed in dozens of cities produced 820 characters of location.
+
+    Against a `varchar(500)` column that is a 500 from the refresh endpoint, and it took down
+    the whole run rather than one posting. Provider-supplied display text has no length we get
+    to assume, and story 21 says it is shown as written — so truncating would lose what the
+    student reads, and the column has to hold it.
+    """
+    board = await _board(session)
+    long_location = ", ".join(f"City {i}, ST" for i in range(120))
+    assert len(long_location) > 1000
+
+    payload = {
+        "jobs": [
+            {
+                "id": 1,
+                "title": "Field Technician",
+                "absolute_url": "https://example.com/1",
+                "content": "Work everywhere.",
+                "location": {"name": long_location},
+            }
+        ]
+    }
+
+    async with _client(lambda _: httpx.Response(200, json=payload)) as client:
+        result = await ingest_board(session, board, client=client)
+
+    assert result.succeeded is True
+    assert result.created == 1
+    stored = (await session.execute(select(Job))).scalar_one()
+    assert stored.location_raw == long_location, "kept whole, not truncated"
+
+
+async def test_an_extremely_long_title_does_not_break_ingestion(
+    session: AsyncSession,
+) -> None:
+    board = await _board(session)
+    long_title = "Senior " * 200 + "Engineer"
+
+    payload = {
+        "jobs": [
+            {
+                "id": 2,
+                "title": long_title,
+                "absolute_url": "https://example.com/2",
+                "content": "Text.",
+            }
+        ]
+    }
+
+    async with _client(lambda _: httpx.Response(200, json=payload)) as client:
+        result = await ingest_board(session, board, client=client)
+
+    assert result.succeeded is True
+    assert result.created == 1
+
+
 # --- a whole refresh ------------------------------------------------------------------
 
 
@@ -198,8 +257,8 @@ async def test_a_provider_with_no_adapter_yet_does_not_break_the_refresh(
     the first version of this raised KeyError and took down every board queued behind it.
     """
     session.add(BoardToken(provider="greenhouse", token="figma", company_name="Figma"))
-    session.add(BoardToken(provider="ashby", token="linear", company_name="Linear"))
-    session.add(BoardToken(provider="lever", token="matchgroup", company_name="Match"))
+    session.add(BoardToken(provider="workday", token="acme", company_name="Acme"))
+    session.add(BoardToken(provider="smartrecruiters", token="beta", company_name="Beta"))
     await session.commit()
 
     async with _client(_ok) as client:
@@ -219,7 +278,7 @@ async def test_an_unsupported_provider_is_not_recorded_as_failing(
     A board we have not attempted is not a board that is broken, and counting it as broken
     would make the ledger cry wolf on every screen.
     """
-    board = BoardToken(provider="ashby", token="linear", company_name="Linear")
+    board = BoardToken(provider="workday", token="acme", company_name="Acme")
     session.add(board)
     await session.commit()
 

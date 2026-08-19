@@ -32,14 +32,16 @@ class Job(Base):
     source: Mapped[str] = mapped_column(String(32), index=True)
     source_job_id: Mapped[str] = mapped_column(String(128))
 
-    company_name: Mapped[str] = mapped_column(String(255), index=True)
-    title: Mapped[str] = mapped_column(String(500))
-
-    # Kept exactly as the posting wrote it, alongside the derived country and remote flag
-    # below. Story 21, and the same principle as storing resume dates as written: a
-    # derived value that guessed wrong should be visibly wrong rather than quietly
-    # authoritative.
-    location_raw: Mapped[str | None] = mapped_column(String(500), default=None)
+    # The three columns below hold text a provider chose, and are deliberately unbounded.
+    #
+    # A cap here can only ever produce a 500 in the refresh, and it did: one real Muse posting
+    # listed in dozens of cities produced 820 characters of location against a varchar(500),
+    # which failed the whole run rather than one posting. There is no length we get to assume
+    # about somebody else's field, truncating would lose what story 21 says is shown as written,
+    # and Postgres charges nothing for text over varchar.
+    company_name: Mapped[str] = mapped_column(Text, index=True)
+    title: Mapped[str] = mapped_column(Text)
+    location_raw: Mapped[str | None] = mapped_column(Text, default=None)
 
     # Derived in ticket 04. Null means not yet classified, which is distinct from
     # classified-as-unknown — the interface needs that difference to explain itself.
@@ -49,7 +51,7 @@ class Job(Base):
     seniority: Mapped[str | None] = mapped_column(String(32), default=None, index=True)
 
     description: Mapped[str] = mapped_column(Text)
-    apply_url: Mapped[str] = mapped_column(String(1000))
+    apply_url: Mapped[str] = mapped_column(Text)
 
     # As the source reported it, and frequently absent. Distinct from first_seen_at, which
     # is when Reachly noticed: a job posted before we registered its board would otherwise

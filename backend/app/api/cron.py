@@ -79,6 +79,8 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
         "boards_succeeded": summary.boards_succeeded,
         "boards_failed": summary.boards_failed,
         "boards_skipped": summary.boards_skipped,
+        "aggregator_attempted": summary.aggregator_attempted,
+        "aggregator_succeeded": summary.aggregator_succeeded,
         "created": summary.created,
         "updated": summary.updated,
         "classified": classified,

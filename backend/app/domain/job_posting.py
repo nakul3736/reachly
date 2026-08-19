@@ -35,3 +35,13 @@ class RawPosting:
     # False for aggregators. Decides which record wins during dedup, and whether absence
     # from a refresh is evidence of anything.
     is_verified: bool = True
+
+    # What the provider itself says, where it says anything.
+    #
+    # Both are hints rather than values because they are only consulted when Reachly's own
+    # deterministic rules come back unknown. A provider's own statement is better evidence than
+    # a regex over a title — The Muse marking "Security Officer" as entry level is a fact we
+    # cannot derive — but a provider is also not allowed to override a rule that did fire, or
+    # an aggregator could quietly reclassify a senior role into a graduate's feed.
+    seniority_hint: str | None = None
+    is_remote_hint: bool | None = None

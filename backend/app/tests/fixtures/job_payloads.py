@@ -18,4 +18,13 @@ def _load(name: str) -> dict[str, Any]:
     return data
 
 
+def _load_list(name: str) -> list[dict[str, Any]]:
+    """Lever returns a bare array, so its fixture is a list rather than an object."""
+    data: list[dict[str, Any]] = json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
+    return data
+
+
 GREENHOUSE_BOARD = _load("greenhouse_board.json")
+LEVER_BOARD = _load_list("lever_board.json")
+ASHBY_BOARD = _load("ashby_board.json")
+MUSE_PAGE = _load("muse_page.json")
