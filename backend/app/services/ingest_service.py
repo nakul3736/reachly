@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.job_sources import greenhouse
 from app.domain.job_posting import RawPosting
+from app.domain.location import extract_location
+from app.domain.role_family import classify_role_family, classify_seniority
 from app.models.board_token import BoardToken
 from app.models.job import Job
 
@@ -187,6 +189,10 @@ async def _upsert(
 
     for posting in postings:
         row = existing.get(posting.source_job_id)
+        location = extract_location(posting.location_raw)
+        role_family = classify_role_family(posting.title)
+        seniority = str(classify_seniority(posting.title))
+
         if row is None:
             session.add(
                 Job(
@@ -195,6 +201,10 @@ async def _upsert(
                     company_name=posting.company_name,
                     title=posting.title,
                     location_raw=posting.location_raw,
+                    country=location.country,
+                    is_remote=location.is_remote,
+                    role_family=role_family,
+                    seniority=seniority,
                     description=posting.description,
                     apply_url=posting.apply_url,
                     posted_at=posting.posted_at,
@@ -214,6 +224,14 @@ async def _upsert(
         row.location_raw = posting.location_raw
         row.apply_url = posting.apply_url
         row.last_seen_at = now
+
+        # Reclassified with the title, because an employer editing "Engineer" to "Senior
+        # Engineer" changes who the posting is for. Leaving the old classification would keep
+        # it in a graduate's feed after it stopped belonging there.
+        row.country = location.country
+        row.is_remote = location.is_remote
+        row.role_family = role_family
+        row.seniority = seniority
 
         # A job that reappears after being closed is reopened rather than duplicated.
         # Roles genuinely get reposted, and a second row would defeat dedup before it runs.

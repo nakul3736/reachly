@@ -67,10 +67,25 @@ async function getJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function fetchJobs(params: { page?: number; pageSize?: number } = {}) {
+export interface JobQuery {
+  seniority?: string[];
+  roleFamily?: string[];
+  country?: string[];
+  remote?: boolean;
+  q?: string;
+}
+
+export function fetchJobs(
+  params: { page?: number; pageSize?: number } & JobQuery = {},
+) {
   const query = new URLSearchParams();
   query.set("page", String(params.page ?? 1));
   query.set("page_size", String(params.pageSize ?? 20));
+  if (params.seniority?.length) query.set("seniority", params.seniority.join(","));
+  if (params.roleFamily?.length) query.set("role_family", params.roleFamily.join(","));
+  if (params.country?.length) query.set("country", params.country.join(","));
+  if (params.remote !== undefined) query.set("remote", String(params.remote));
+  if (params.q) query.set("q", params.q);
   return getJson<JobFeed>(`/api/v1/jobs?${query.toString()}`);
 }
 
