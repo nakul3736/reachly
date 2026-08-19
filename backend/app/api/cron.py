@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_session
+from app.services.ingest_service import refresh_all_boards
+from app.services.job_service import classify_stored_jobs
 
 router = APIRouter(prefix="/internal/cron", tags=["internal"])
 
@@ -54,3 +56,30 @@ async def keepalive() -> dict[str, str]:
     calling it every ten minutes costs nothing.
     """
     return {"task": "keepalive", "status": "ok"}
+
+
+@router.post("/refresh-jobs", dependencies=[CronAuth])
+async def refresh_jobs(session: SessionDep) -> dict[str, object]:
+    """Read every registered board and fold the results into the shared index.
+
+    Returns per-source counts rather than a bare acknowledgement. Story 28: a source that
+    fetches successfully and creates nothing for a week is the failure that hides best, so the
+    numbers have to come back where a scheduler's logs will keep them.
+
+    Classification runs in the same request as ingestion, and that ordering matters more than it
+    looks. The feed's filters are exclusions, so a posting sitting in the index unclassified is
+    not merely unsorted — it is invisible to every active filter.
+    """
+    summary = await refresh_all_boards(session)
+    classified = await classify_stored_jobs(session)
+
+    return {
+        "task": "refresh-jobs",
+        "boards_attempted": summary.boards_attempted,
+        "boards_succeeded": summary.boards_succeeded,
+        "boards_failed": summary.boards_failed,
+        "boards_skipped": summary.boards_skipped,
+        "created": summary.created,
+        "updated": summary.updated,
+        "classified": classified,
+    }
