@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, cron, resumes, sources, students
+from app.api import auth, cron, jobs, resumes, sources, students
 from app.config import get_settings
 from app.db import database_is_reachable, dispose_engine
 from app.errors import register_error_handlers
@@ -61,6 +61,7 @@ router.include_router(auth.router)
 router.include_router(students.router)
 router.include_router(resumes.router)
 router.include_router(sources.router)
+router.include_router(jobs.router)
 app.include_router(router)
 
 # Not under /api/v1: these are operational endpoints, not part of the student-facing API.

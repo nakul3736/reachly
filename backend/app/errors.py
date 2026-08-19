@@ -58,6 +58,18 @@ class ResumeNotFound(DomainError):
     message = "That resume does not exist."
 
 
+class JobNotFound(DomainError):
+    """No such job in the shared index.
+
+    A closed job is not this error. It is returned normally, with its closing date, because
+    the student may have applied to it and a 404 would be a lie about something that existed.
+    """
+
+    status_code = 404
+    code = "job_not_found"
+    message = "We could not find that job."
+
+
 class NoActiveResume(DomainError):
     """The student has not uploaded a resume yet.
 
