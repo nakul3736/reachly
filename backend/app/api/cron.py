@@ -83,5 +83,14 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
         "aggregator_succeeded": summary.aggregator_succeeded,
         "created": summary.created,
         "updated": summary.updated,
+        "reopened": summary.reopened,
+        "closed": summary.closed,
+        # Per source, because a total would hide one adapter closing its entire listing behind
+        # four that closed nothing. Story 28 wants that visible in the run that causes it.
+        "closed_by_source": summary.closed_by_source,
+        "aggregator_expired": summary.aggregator_expired,
+        # Boards that answered 200 with an empty list while still holding open jobs. Named, not
+        # counted: the useful question is which board to go and look at.
+        "suspicious_boards": summary.suspicious_boards,
         "classified": classified,
     }

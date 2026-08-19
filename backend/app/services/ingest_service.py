@@ -6,11 +6,11 @@ Adapters stay pure, and this decides what a fetch means.
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.http import get_http_client
@@ -55,6 +55,15 @@ class IngestResult:
     created: int = 0
     updated: int = 0
     skipped: int = 0
+    # Transitioned to closed by this fetch. Counts the transition rather than the total number
+    # of closed jobs, so a sweep that closes nothing new reports zero instead of a growing
+    # number that looks like an escalating problem.
+    closed: int = 0
+    reopened: int = 0
+    # A 200 carrying an empty list where this board previously had postings. Not treated as
+    # closure and not discarded either: it is the shape a provider returns for a deleted board,
+    # a rotated token, and an adapter that stopped matching the payload.
+    suspicious: bool = False
     seen_source_ids: frozenset[str] = frozenset()
     error: str | None = None
 
@@ -86,7 +95,25 @@ async def ingest_board(
 
     postings = _PARSERS[board.provider](payload, company_name=board.company_name)
 
-    result = await _upsert(session, postings, source=board.provider)
+    result = await _upsert(session, postings, source=board.provider, board=board)
+
+    # The sweep runs only here — on the success path, after a fetch that returned something.
+    # Both conditions are load-bearing, and each has its own test, because getting either wrong
+    # empties the feed rather than merely leaving a dead job in it.
+    if postings:
+        result.closed = await _sweep_closures(session, board, result.seen_source_ids)
+    else:
+        # An empty list is not evidence that a company filled every role at once. It is far more
+        # likely a deleted board, a rotated token, or an adapter that stopped matching the
+        # payload — and a board with genuinely nothing open is normal and must not be flagged
+        # forever, so previously having had postings is what makes this worth reporting.
+        result.suspicious = await _has_open_jobs(session, board)
+        if result.suspicious:
+            logger.warning(
+                "board %s/%s returned an empty list but has open jobs — not sweeping",
+                board.provider,
+                board.token,
+            )
 
     board.last_succeeded_at = datetime.now(UTC)
     board.consecutive_failures = 0
@@ -94,6 +121,104 @@ async def ingest_board(
     await session.commit()
 
     return result
+
+
+async def _has_open_jobs(session: AsyncSession, board: BoardToken) -> bool:
+    found = (
+        await session.execute(
+            select(Job.id)
+            .where(Job.board_token_id == board.id, Job.closed_at.is_(None))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return found is not None
+
+
+async def _sweep_closures(
+    session: AsyncSession, board: BoardToken, seen: frozenset[str]
+) -> int:
+    """Close this board's open jobs that the board no longer lists.
+
+    Scoped by `board_token_id` rather than by source or company name. By source, Figma's refresh
+    would close Linear's entire listing — both are Greenhouse, and neither appears in the
+    other's response. By company name, a firm running a second board for a region would have
+    each board close the other.
+
+    `closed_at` is only written where it is null, so it records when absence was **first**
+    observed. Overwriting it on every later sweep would make a role closed three weeks ago show
+    as closed today, forever.
+    """
+    stale = (
+        (
+            await session.execute(
+                select(Job).where(
+                    Job.board_token_id == board.id,
+                    Job.closed_at.is_(None),
+                    Job.source_job_id.notin_(seen) if seen else true(),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    now = datetime.now(UTC)
+    for job in stale:
+        job.closed_at = now
+
+    if stale:
+        logger.info(
+            "closed %d posting(s) no longer listed on %s/%s",
+            len(stale),
+            board.provider,
+            board.token,
+        )
+    return len(stale)
+
+
+async def expire_stale_aggregator_rows(
+    session: AsyncSession, *, max_age_days: int = 14
+) -> int:
+    """Close unverified postings not seen for a while.
+
+    The Muse is read a bounded number of pages deep and does not enumerate a complete set, so a
+    posting missing from today's read may simply have moved to page thirteen. Absence therefore
+    proves nothing about an aggregator row and cannot be allowed to close one — but leaving them
+    forever would fill the feed with roles that quietly ended months ago.
+
+    A timer is the honest compromise: it makes no claim about a specific posting, only that a
+    copy of unknown age that has not been re-seen in two weeks is no longer worth a student's
+    evening. Verified board rows are deliberately untouched by age. A company posting that has
+    been open for six months is still open, and its board says so every day.
+    """
+    cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
+
+    stale = (
+        (
+            await session.execute(
+                select(Job).where(
+                    Job.is_verified.is_(False),
+                    Job.closed_at.is_(None),
+                    Job.last_seen_at < cutoff,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    now = datetime.now(UTC)
+    for job in stale:
+        job.closed_at = now
+
+    await session.commit()
+    if stale:
+        logger.info(
+            "expired %d aggregator posting(s) older than %d days",
+            len(stale),
+            max_age_days,
+        )
+    return len(stale)
 
 
 @dataclass
@@ -118,6 +243,16 @@ class RefreshSummary:
     aggregator_succeeded: bool = False
     created: int = 0
     updated: int = 0
+    reopened: int = 0
+    closed: int = 0
+    # Broken out per source so a rule or adapter change that starts closing everything is
+    # visible in the run that does it, rather than a week later when the feed is empty. A
+    # single total would hide one source closing all of its postings behind four that did not.
+    closed_by_source: dict[str, int] = field(default_factory=dict)
+    aggregator_expired: int = 0
+    # Boards that returned a 200 with nothing in it while holding open jobs. Named rather than
+    # counted, because the useful question is which board to go and look at.
+    suspicious_boards: list[str] = field(default_factory=list)
 
 
 async def refresh_all_boards(
@@ -161,6 +296,14 @@ async def refresh_all_boards(
                 summary.boards_succeeded += 1
                 summary.created += result.created
                 summary.updated += result.updated
+                summary.reopened += result.reopened
+                summary.closed += result.closed
+                if result.closed:
+                    summary.closed_by_source[board.provider] = (
+                        summary.closed_by_source.get(board.provider, 0) + result.closed
+                    )
+                if result.suspicious:
+                    summary.suspicious_boards.append(f"{board.provider}/{board.token}")
             else:
                 summary.boards_failed += 1
         # The Muse last, and counted separately, because it is one endpoint for every company
@@ -172,6 +315,18 @@ async def refresh_all_boards(
         summary.aggregator_succeeded = muse_result.succeeded
         summary.created += muse_result.created
         summary.updated += muse_result.updated
+        summary.reopened += muse_result.reopened
+
+        # Aggregator rows expire on age instead of absence, so this runs once per refresh rather
+        # than per source. Counted apart from swept closures because it is a weaker claim: a
+        # board says a job is gone, a timer only says nobody has confirmed it lately.
+        expired = await expire_stale_aggregator_rows(session)
+        summary.aggregator_expired = expired
+        summary.closed += expired
+        if expired:
+            summary.closed_by_source[muse.SOURCE] = (
+                summary.closed_by_source.get(muse.SOURCE, 0) + expired
+            )
     finally:
         if owns_client:
             await active_client.aclose()
@@ -233,7 +388,11 @@ async def ingest_muse(
 
 
 async def _upsert(
-    session: AsyncSession, postings: list[RawPosting], *, source: str
+    session: AsyncSession,
+    postings: list[RawPosting],
+    *,
+    source: str,
+    board: BoardToken | None = None,
 ) -> IngestResult:
     """Create what is new, refresh what is not.
 
@@ -254,6 +413,7 @@ async def _upsert(
 
     created = 0
     updated = 0
+    reopened = 0
     now = datetime.now(UTC)
 
     for posting in postings:
@@ -293,6 +453,7 @@ async def _upsert(
                     apply_url=posting.apply_url,
                     posted_at=posting.posted_at,
                     is_verified=posting.is_verified,
+                    board_token_id=board.id if board is not None else None,
                     first_seen_at=now,
                     last_seen_at=now,
                 )
@@ -319,7 +480,16 @@ async def _upsert(
 
         # A job that reappears after being closed is reopened rather than duplicated.
         # Roles genuinely get reposted, and a second row would defeat dedup before it runs.
-        row.closed_at = None
+        # Counted, because a board that reopens the same postings every day is a board whose
+        # ids are unstable, and that shows up here before it shows up as a duplicated feed.
+        if row.closed_at is not None:
+            row.closed_at = None
+            reopened += 1
+
+        # Backfilled for rows created before the board link existed, so the first sweep after
+        # this ships is correctly scoped rather than silently skipping every older posting.
+        if board is not None and row.board_token_id is None:
+            row.board_token_id = board.id
 
         updated += 1
 
@@ -329,5 +499,6 @@ async def _upsert(
         succeeded=True,
         created=created,
         updated=updated,
+        reopened=reopened,
         seen_source_ids=frozenset(ids),
     )

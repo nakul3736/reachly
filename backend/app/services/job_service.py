@@ -29,6 +29,9 @@ class JobFilters:
     remote: bool | None = None
     q: str | None = None
     company: str | None = None
+    # Off by default. A closed job is not a worse opportunity, it is not an opportunity — but it
+    # stays reachable on request so a student can see what happened to something they tracked.
+    include_closed: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Echoed back so an empty result can name the filter responsible."""
@@ -39,6 +42,7 @@ class JobFilters:
             "remote": self.remote,
             "q": self.q,
             "company": self.company,
+            "include_closed": self.include_closed,
         }
 
 
@@ -51,13 +55,20 @@ class JobPage:
     filters: JobFilters
 
 
-def _visible() -> Select[tuple[Job]]:
+def _visible(include_closed: bool = False) -> Select[tuple[Job]]:
     """The feed's baseline: open jobs that are not an alias of another row.
 
     Both are exclusions rather than orderings. A closed job is not a worse opportunity, it is
     not an opportunity, and an alias is the same opportunity twice.
+
+    The alias exclusion is not optional even when closed jobs are requested. Showing a closed
+    job on request answers "what happened to this?"; showing an alias answers nothing, because
+    the canonical row is already in the same list saying the same thing.
     """
-    return select(Job).where(Job.closed_at.is_(None), Job.canonical_job_id.is_(None))
+    statement = select(Job).where(Job.canonical_job_id.is_(None))
+    if not include_closed:
+        statement = statement.where(Job.closed_at.is_(None))
+    return statement
 
 
 def _apply(statement: Select[tuple[Job]], filters: JobFilters) -> Select[tuple[Job]]:
@@ -99,7 +110,7 @@ async def list_jobs(
     page_size = min(max(1, page_size), 100)
     filters = filters or JobFilters()
 
-    base = _apply(_visible(), filters)
+    base = _apply(_visible(filters.include_closed), filters)
 
     total = int(
         (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()

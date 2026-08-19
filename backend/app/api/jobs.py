@@ -86,6 +86,13 @@ async def list_jobs(
     remote: bool | None = Query(None),
     q: str | None = Query(None, max_length=200),
     company: str | None = Query(None, max_length=200),
+    include_closed: bool = Query(
+        False,
+        description=(
+            "Include postings that have closed. Off by default: a closed role is not a "
+            "weaker match, it is not a match."
+        ),
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> JobFeed:
     filters = JobFilters(
@@ -95,6 +102,7 @@ async def list_jobs(
         remote=remote,
         q=q.strip() if q and q.strip() else None,
         company=company.strip() if company and company.strip() else None,
+        include_closed=include_closed,
     )
 
     result = await job_service.list_jobs(

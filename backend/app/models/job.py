@@ -67,6 +67,17 @@ class Job(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    # Which registry row produced this posting. Null for the aggregator, which has no board.
+    #
+    # Closure detection is why this exists rather than the sweep being scoped by `source` or by
+    # `company_name`. By source, Figma's refresh would close Linear's entire listing — both are
+    # Greenhouse, and neither appears in the other's response. By company name, a firm running a
+    # second board for a region or subsidiary would have each close the other. Only the board
+    # identity answers "was this posting in the response we just got?".
+    board_token_id: Mapped[int | None] = mapped_column(
+        ForeignKey("board_tokens.id", ondelete="SET NULL"), default=None, index=True
+    )
+
     # Set when a posting stops appearing in a successful board refresh. The row is kept:
     # a student's application must still resolve to the job it was made against, so
     # history cannot be allowed to develop holes.
