@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.board_token import BoardToken
 from app.models.job import Job
-from app.services.ingest_service import ingest_board
+from app.services.ingest_service import ingest_board, refresh_all_boards
 from app.tests.fixtures.job_payloads import GREENHOUSE_BOARD
 
 pytestmark = pytest.mark.anyio
@@ -183,3 +183,82 @@ async def test_an_empty_board_succeeds_with_nothing_created(session: AsyncSessio
     assert result.succeeded is True
     assert result.created == 0
     assert board.last_succeeded_at is not None
+
+
+# --- a whole refresh ------------------------------------------------------------------
+
+
+async def test_a_provider_with_no_adapter_yet_does_not_break_the_refresh(
+    session: AsyncSession,
+) -> None:
+    """The registry is seeded with providers whose adapters arrive in ticket 03.
+
+    Reaching one must not end the run. This is the isolation promise the entire refresh
+    design rests on, and it has to hold for "not built yet" exactly as it does for a 500 —
+    the first version of this raised KeyError and took down every board queued behind it.
+    """
+    session.add(BoardToken(provider="greenhouse", token="figma", company_name="Figma"))
+    session.add(BoardToken(provider="ashby", token="linear", company_name="Linear"))
+    session.add(BoardToken(provider="lever", token="matchgroup", company_name="Match"))
+    await session.commit()
+
+    async with _client(_ok) as client:
+        summary = await refresh_all_boards(session, client=client)
+
+    assert summary.boards_succeeded == 1
+    assert summary.boards_skipped == 2
+    assert summary.boards_failed == 0, "unsupported is not the same as broken"
+    assert summary.created == len(GREENHOUSE_BOARD["jobs"])
+
+
+async def test_an_unsupported_provider_is_not_recorded_as_failing(
+    session: AsyncSession,
+) -> None:
+    """Story 28 depends on the failure count meaning something.
+
+    A board we have not attempted is not a board that is broken, and counting it as broken
+    would make the ledger cry wolf on every screen.
+    """
+    board = BoardToken(provider="ashby", token="linear", company_name="Linear")
+    session.add(board)
+    await session.commit()
+
+    async with _client(_ok) as client:
+        await refresh_all_boards(session, client=client)
+
+    assert board.consecutive_failures == 0
+    assert board.last_error is None
+
+
+async def test_one_failing_board_does_not_stop_the_others(session: AsyncSession) -> None:
+    """A Lever outage must not cost us Greenhouse, Ashby and The Muse as well."""
+    session.add(BoardToken(provider="greenhouse", token="good", company_name="Good"))
+    session.add(BoardToken(provider="greenhouse", token="bad", company_name="Bad"))
+    await session.commit()
+
+    def selective(request: httpx.Request) -> httpx.Response:
+        if "bad" in str(request.url):
+            return httpx.Response(500, text="boom")
+        return httpx.Response(200, json=GREENHOUSE_BOARD)
+
+    async with _client(selective) as client:
+        summary = await refresh_all_boards(session, client=client)
+
+    assert summary.boards_attempted == 2
+    assert summary.boards_succeeded == 1
+    assert summary.boards_failed == 1
+    assert summary.created == len(GREENHOUSE_BOARD["jobs"])
+
+
+async def test_an_inactive_board_is_not_fetched(session: AsyncSession) -> None:
+    board = BoardToken(
+        provider="greenhouse", token="figma", company_name="Figma", active=False
+    )
+    session.add(board)
+    await session.commit()
+
+    async with _client(_ok) as client:
+        summary = await refresh_all_boards(session, client=client)
+
+    assert summary.boards_attempted == 0
+    assert await _count(session) == 0

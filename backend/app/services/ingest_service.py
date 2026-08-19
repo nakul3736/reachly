@@ -83,6 +83,84 @@ async def ingest_board(
     return result
 
 
+@dataclass
+class RefreshSummary:
+    """What a whole refresh did, per source.
+
+    Reported rather than logged and forgotten, because story 28 asks for a silently broken
+    adapter to be visible. A source that fetched successfully and created nothing for a week
+    is the failure that hides best.
+    """
+
+    boards_attempted: int = 0
+    boards_succeeded: int = 0
+    boards_failed: int = 0
+    # Registered, but Reachly has no adapter for that provider yet. Counted apart from
+    # failures on purpose: a board nobody has tried is not a board that is broken, and
+    # folding the two together would make the interface cry wolf.
+    boards_skipped: int = 0
+    created: int = 0
+    updated: int = 0
+
+
+async def refresh_all_boards(
+    session: AsyncSession, *, client: httpx.AsyncClient | None = None
+) -> RefreshSummary:
+    """Fetch every active board, one at a time, isolating failures.
+
+    Sequential on purpose. Concurrency would finish sooner, but the free host has one small
+    container and a burst of parallel requests to the same provider is exactly the shape that
+    earns a rate limit. The refresh has all day.
+    """
+    boards = (
+        (
+            await session.execute(
+                select(BoardToken)
+                .where(BoardToken.active.is_(True))
+                .order_by(BoardToken.consecutive_failures, BoardToken.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    summary = RefreshSummary()
+    owns_client = client is None
+    active_client = client or httpx.AsyncClient()
+
+    try:
+        for board in boards:
+            # Checked here rather than inside ingest_board so an unsupported provider never
+            # counts as an attempt. The registry is seeded with every provider up front,
+            # while adapters arrive one ticket at a time.
+            if board.provider not in _PARSERS:
+                summary.boards_skipped += 1
+                logger.info("no adapter for provider %s, skipping", board.provider)
+                continue
+
+            summary.boards_attempted += 1
+            result = await ingest_board(session, board, client=active_client)
+            if result.succeeded:
+                summary.boards_succeeded += 1
+                summary.created += result.created
+                summary.updated += result.updated
+            else:
+                summary.boards_failed += 1
+    finally:
+        if owns_client:
+            await active_client.aclose()
+
+    logger.info(
+        "refresh complete: %d/%d boards ok, %d skipped, %d created, %d updated",
+        summary.boards_succeeded,
+        summary.boards_attempted,
+        summary.boards_skipped,
+        summary.created,
+        summary.updated,
+    )
+    return summary
+
+
 async def _upsert(
     session: AsyncSession, postings: list[RawPosting], *, source: str
 ) -> IngestResult:
