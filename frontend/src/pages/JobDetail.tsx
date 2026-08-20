@@ -126,6 +126,43 @@ export default function JobDetailPage() {
               {job.data.description}
             </div>
           </section>
+
+          {job.data.also_seen_on.length > 0 && (
+            <section className="mt-4 rounded-card border border-rule bg-paper p-5 sm:p-6">
+              <h2 className="font-receipt text-[11px] uppercase tracking-[0.08em] text-slate">
+                Also listed on
+              </h2>
+              <p className="mt-2 text-[15px] text-slate">
+                Reachly matched {job.data.also_seen_on.length}{" "}
+                {job.data.also_seen_on.length === 1 ? "other listing" : "other listings"} to
+                this role and kept the company&apos;s own posting as the record. Apply through
+                the link above.
+              </p>
+              <ul className="mt-3 flex flex-col gap-2">
+                {job.data.also_seen_on.map((alias) => (
+                  <li key={`${alias.source}-${alias.apply_url}`}>
+                    <ReceiptLine>
+                      {[
+                        <Fact key="src">{alias.source}</Fact>,
+                        <Fact key="kind" tone={alias.is_verified ? "confirmed" : "inferred"}>
+                          {alias.is_verified ? "company board" : "aggregator copy"}
+                        </Fact>,
+                        <a
+                          key="link"
+                          href={alias.apply_url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="font-receipt text-[11px] tracking-[0.02em] text-slate underline decoration-rule hover:text-ink"
+                        >
+                          view listing
+                        </a>,
+                      ]}
+                    </ReceiptLine>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </article>
       )}
     </main>

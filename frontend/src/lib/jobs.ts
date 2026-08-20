@@ -23,9 +23,17 @@ export interface JobSummary {
   is_verified: boolean;
 }
 
+export interface JobAlias {
+  source: string;
+  apply_url: string;
+  is_verified: boolean;
+}
+
 export interface JobDetail extends JobSummary {
   description: string;
   apply_url: string;
+  /** Other listings collapsed into this one, so the match is visible rather than assumed. */
+  also_seen_on: JobAlias[];
 }
 
 export interface JobFeed {

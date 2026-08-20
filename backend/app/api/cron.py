@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import get_session
+from app.services.dedup_service import deduplicate
 from app.services.ingest_service import refresh_all_boards
 from app.services.job_service import classify_stored_jobs
 
@@ -69,9 +70,18 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
     Classification runs in the same request as ingestion, and that ordering matters more than it
     looks. The feed's filters are exclusions, so a posting sitting in the index unclassified is
     not merely unsorted — it is invisible to every active filter.
+
+    Dedup runs last, after classification, and that order is also deliberate: it reuses the
+    seniority and role family just derived to rule pairs out for free, which is what keeps the
+    ambiguous band — the only part of this feature that spends inference — as small as it is.
     """
     summary = await refresh_all_boards(session)
     classified = await classify_stored_jobs(session)
+
+    # No inference client is passed. Dedup's deterministic bands do the work, and the deployed
+    # demo has no key at all — a refresh that needed one would do nothing in the environment the
+    # judges use. The ambiguous band degrades to distinct, which is the safe direction.
+    dedup = await deduplicate(session)
 
     return {
         "task": "refresh-jobs",
@@ -79,6 +89,9 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
         "boards_succeeded": summary.boards_succeeded,
         "boards_failed": summary.boards_failed,
         "boards_skipped": summary.boards_skipped,
+        # Deferred by backoff rather than broken. A permanently dead company must not consume
+        # the run window every day, and must not be reported as a failure it did not have today.
+        "boards_backed_off": summary.boards_backed_off,
         "aggregator_attempted": summary.aggregator_attempted,
         "aggregator_succeeded": summary.aggregator_succeeded,
         "created": summary.created,
@@ -92,5 +105,17 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
         # Boards that answered 200 with an empty list while still holding open jobs. Named, not
         # counted: the useful question is which board to go and look at.
         "suspicious_boards": summary.suspicious_boards,
+        # True when the run stopped early to stay inside its window. A run that keeps hitting
+        # this needs a longer window or fewer boards, and that is invisible if a truncated run
+        # looks exactly like a complete one.
+        "deadline_reached": summary.deadline_reached,
+        "elapsed_seconds": summary.elapsed_seconds,
         "classified": classified,
+        "deduplicated": {
+            "compared": dedup.compared,
+            "collapsed": dedup.collapsed,
+            "asked": dedup.asked,
+            "undecided": dedup.undecided,
+            "decided_by": dedup.decided_by,
+        },
     }

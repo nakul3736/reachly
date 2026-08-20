@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session
 from app.domain.role_family import ROLE_FAMILIES, Seniority
-from app.models.job import Job
 from app.services import job_service
 from app.services.job_service import JobFilters
 
@@ -37,9 +36,20 @@ class JobSummary(BaseModel):
     is_verified: bool
 
 
+class JobAlias(BaseModel):
+    """Another record of the same job, collapsed into the canonical row."""
+
+    source: str
+    apply_url: str
+    is_verified: bool
+
+
 class JobDetail(JobSummary):
     description: str
     apply_url: str
+    # Where else this posting was seen. Shown so collapsing is visible: telling a student two
+    # records are one job is a claim, and an unexplained claim has to be taken on trust.
+    also_seen_on: list[JobAlias] = []
 
 
 class JobFeed(BaseModel):
@@ -133,5 +143,12 @@ async def filter_options() -> dict[str, list[str]]:
 
 
 @router.get("/{job_id}", response_model=JobDetail)
-async def get_job(job_id: int, session: AsyncSession = Depends(get_session)) -> Job:
-    return await job_service.get_job(session, job_id)
+async def get_job(job_id: int, session: AsyncSession = Depends(get_session)) -> JobDetail:
+    job = await job_service.get_job(session, job_id)
+    aliases = await job_service.get_aliases(session, job_id)
+
+    detail = JobDetail.model_validate(job, from_attributes=True)
+    detail.also_seen_on = [
+        JobAlias.model_validate(alias, from_attributes=True) for alias in aliases
+    ]
+    return detail

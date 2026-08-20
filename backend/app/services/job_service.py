@@ -144,6 +144,25 @@ async def get_job(session: AsyncSession, job_id: int) -> Job:
     return job
 
 
+async def get_aliases(session: AsyncSession, job_id: int) -> list[Job]:
+    """The other rows that were collapsed into this one.
+
+    Returned so the detail screen can show where else a posting was seen. Collapsing is a claim
+    Reachly makes about two records being one job, and an unexplained claim is one the student
+    has
+    to take on trust — the same reason tailoring shows its evidence.
+    """
+    return list(
+        (
+            await session.execute(
+                select(Job).where(Job.canonical_job_id == job_id).order_by(Job.source)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def classify_stored_jobs(session: AsyncSession, *, force: bool = False) -> int:
     """Derive role family, seniority, country and remote for stored jobs.
 

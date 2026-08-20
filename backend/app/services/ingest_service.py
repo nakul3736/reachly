@@ -5,6 +5,7 @@ Adapters stay pure, and this decides what a fetch means.
 """
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,44 @@ _PARSERS: dict[str, Callable[..., list[RawPosting]]] = {
 }
 
 _MUSE_URL = "https://www.themuse.com/api/public/jobs?page={page}&level=Entry%20Level"
+
+# How long a whole run may take. The free host will terminate a request that outlives its limit,
+# and a terminated run reports nothing at all — no counts, no errors, no way to tell it from a
+# run
+# that found nothing. Stopping early with a truthful summary is strictly better.
+DEFAULT_MAX_SECONDS = 240.0
+
+# Backoff. A board that has failed repeatedly is asked less often, because eighteen boards share
+# one finite window and a company that deleted its board should not keep its full share of it.
+#
+# A delay rather than deactivation, deliberately: a board can come back, only an attempt can
+# discover that, and nothing in this system would ever reactivate a board it had given up on.
+_BACKOFF_BASE_HOURS = 2.0
+_BACKOFF_MAX_HOURS = 72.0
+# Below this, failures are treated as noise. Providers return the occasional 500 and recover in
+# a
+# minute, and backing off after one of those would make the index worse for no reason.
+_BACKOFF_AFTER_FAILURES = 3
+
+
+def should_attempt(board: BoardToken) -> bool:
+    """Whether this board has waited long enough after repeated failures.
+
+    Exponential in the failure count and capped, so a permanently dead board settles at one
+    attempt every three days rather than doubling its way into never being tried again.
+    """
+    if board.consecutive_failures < _BACKOFF_AFTER_FAILURES:
+        return True
+    if board.last_fetched_at is None:
+        return True
+
+    over = board.consecutive_failures - _BACKOFF_AFTER_FAILURES
+    delay_hours = min(_BACKOFF_BASE_HOURS * (2**over), _BACKOFF_MAX_HOURS)
+
+    last = board.last_fetched_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return datetime.now(UTC) - last >= timedelta(hours=delay_hours)
 
 
 @dataclass
@@ -237,6 +276,13 @@ class RefreshSummary:
     # failures on purpose: a board nobody has tried is not a board that is broken, and
     # folding the two together would make the interface cry wolf.
     boards_skipped: int = 0
+    # Deferred by backoff. Counted apart from both failures and skips: this board is not broken
+    # and does have an adapter, it simply failed often enough that asking again today is not
+    # worth
+    # the window. Conflating it with a failure would make the interface report a problem that
+    # the
+    # run deliberately avoided.
+    boards_backed_off: int = 0
     # The Muse, tracked apart from boards because it is not one. It covers every company from a
     # single endpoint, so it has no token, no registry row, and its absence proves nothing.
     aggregator_attempted: bool = False
@@ -253,23 +299,47 @@ class RefreshSummary:
     # Boards that returned a 200 with nothing in it while holding open jobs. Named rather than
     # counted, because the useful question is which board to go and look at.
     suspicious_boards: list[str] = field(default_factory=list)
+    # True when the run stopped early to stay inside its window. Reported rather than hidden: a
+    # run that keeps hitting its deadline is a run that needs a longer window or fewer boards,
+    # and
+    # that is invisible if a truncated run looks identical to a complete one.
+    deadline_reached: bool = False
+    elapsed_seconds: float = 0.0
 
 
 async def refresh_all_boards(
-    session: AsyncSession, *, client: httpx.AsyncClient | None = None
+    session: AsyncSession,
+    *,
+    client: httpx.AsyncClient | None = None,
+    max_seconds: float = DEFAULT_MAX_SECONDS,
 ) -> RefreshSummary:
     """Fetch every active board, one at a time, isolating failures.
 
     Sequential on purpose. Concurrency would finish sooner, but the free host has one small
     container and a burst of parallel requests to the same provider is exactly the shape that
     earns a rate limit. The refresh has all day.
+
+    Bounded by `max_seconds`. Boards not reached are still active and are fetched first next
+    time,
+    because the ordering below puts the least recently fetched at the front — so a run that is
+    repeatedly cut short still covers the whole registry over a few triggers rather than
+    favouring
+    whichever boards happen to sort first.
     """
     boards = (
         (
             await session.execute(
                 select(BoardToken)
                 .where(BoardToken.active.is_(True))
-                .order_by(BoardToken.consecutive_failures, BoardToken.id)
+                .order_by(
+                    # Never-fetched boards first, then the most neglected. This is what makes a
+                    # truncated run fair: the boards a short run misses are the ones the next
+                    # run
+                    # starts with.
+                    BoardToken.last_fetched_at.is_not(None),
+                    BoardToken.last_fetched_at,
+                    BoardToken.id,
+                )
             )
         )
         .scalars()
@@ -279,15 +349,27 @@ async def refresh_all_boards(
     summary = RefreshSummary()
     owns_client = client is None
     active_client = client or get_http_client()
+    started = time.monotonic()
 
     try:
         for board in boards:
+            if time.monotonic() - started >= max_seconds:
+                summary.deadline_reached = True
+                logger.info(
+                    "refresh deadline reached after %d board(s)", summary.boards_attempted
+                )
+                break
+
             # Checked here rather than inside ingest_board so an unsupported provider never
             # counts as an attempt. The registry is seeded with every provider up front,
             # while adapters arrive one ticket at a time.
             if board.provider not in _PARSERS:
                 summary.boards_skipped += 1
                 logger.info("no adapter for provider %s, skipping", board.provider)
+                continue
+
+            if not should_attempt(board):
+                summary.boards_backed_off += 1
                 continue
 
             summary.boards_attempted += 1
@@ -310,12 +392,15 @@ async def refresh_all_boards(
         # rather than a board per company. Folding it into the board counters would make
         # "boards attempted" a number that does not correspond to any company, and story 28
         # depends on those counts meaning something precise.
-        summary.aggregator_attempted = True
-        muse_result = await ingest_muse(session, client=active_client)
-        summary.aggregator_succeeded = muse_result.succeeded
-        summary.created += muse_result.created
-        summary.updated += muse_result.updated
-        summary.reopened += muse_result.reopened
+        if time.monotonic() - started < max_seconds:
+            summary.aggregator_attempted = True
+            muse_result = await ingest_muse(session, client=active_client)
+            summary.aggregator_succeeded = muse_result.succeeded
+            summary.created += muse_result.created
+            summary.updated += muse_result.updated
+            summary.reopened += muse_result.reopened
+        else:
+            summary.deadline_reached = True
 
         # Aggregator rows expire on age instead of absence, so this runs once per refresh rather
         # than per source. Counted apart from swept closures because it is a weaker claim: a
@@ -330,6 +415,8 @@ async def refresh_all_boards(
     finally:
         if owns_client:
             await active_client.aclose()
+
+    summary.elapsed_seconds = round(time.monotonic() - started, 2)
 
     logger.info(
         "refresh complete: %d/%d boards ok, %d skipped, %d created, %d updated",
