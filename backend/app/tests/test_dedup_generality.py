@@ -101,11 +101,12 @@ def test_no_rule_names_a_company() -> None:
 
     # Company names appear in this file only inside comments that record where a bug was found.
     # Splitting the code from the prose is what makes the assertion meaningful.
-    code = "\n".join(
+    without_comments = "\n".join(
         line for line in source.splitlines() if not line.strip().startswith("#")
     )
-    code = code.split('"""')
-    executable = "".join(code[::2])
+    # Every other segment of a docstring-delimited split is executable code.
+    segments = without_comments.split('"""')
+    executable = "".join(segments[::2])
 
     for board in SEED_BOARDS:
         assert board.company_name.casefold() not in executable.casefold(), (

@@ -1,0 +1,96 @@
+# The index maintains itself from outside the process.
+#
+# ADR 0007: an in-process timer stops silently on a host that suspends idle containers, and
+# silently is the failure that costs a judged window. The scheduler therefore lives outside the
+# application, and this workflow is one of the two triggers that ADR asks for — a single scheduler
+# is a single point of failure, and GitHub's cron is known to run late or skip runs under load.
+#
+# Both steps fail closed. If a secret is missing the job stops with a message naming what to set,
+# rather than reporting success for requests it never made. A green tick on a workflow that quietly
+# did nothing is worse than a red one.
+name: Scheduled refresh
+
+on:
+  schedule:
+    # Twice daily. Boards publish throughout the day and the ingest is bounded, so two passes keep
+    # the index current without spending the free host's request budget on postings that have not
+    # changed. Times are UTC and deliberately off the hour: GitHub queues cron heavily at :00.
+    - cron: "17 7,19 * * *"
+  # So the refresh can be triggered by hand during judging without waiting for the schedule.
+  workflow_dispatch:
+
+# Two runs overlapping would have both sweeping the same boards. The refresh is idempotent, so
+# this is about not wasting a free host's capacity rather than about correctness.
+concurrency:
+  group: scheduled-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the configuration is present
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          missing=""
+          [ -z "$API_BASE_URL" ] && missing="$missing API_BASE_URL"
+          [ -z "$CRON_SECRET" ] && missing="$missing CRON_SECRET"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing"
+            echo "Set them under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "Configuration present."
+
+      - name: Wake the service
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          # The free tier suspends an idle container, and a cold start can outlast the refresh
+          # request's own timeout. Waking first, and tolerating failure here, keeps a slow start
+          # from being reported as a refresh failure.
+          curl --silent --show-error --max-time 120 --retry 3 --retry-delay 20 \
+            -X POST "$API_BASE_URL/internal/cron/keepalive" \
+            -H "X-Cron-Secret: $CRON_SECRET" || echo "Keepalive did not answer; continuing."
+
+      - name: Refresh the job index
+        env:
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          # --fail so a 404 from a wrong secret is a failed job rather than a logged body nobody
+          # reads. The endpoint answers 404 rather than 401 by design, so an unauthenticated
+          # caller cannot tell the route exists.
+          response=$(curl --silent --show-error --fail --max-time 600 \
+            -X POST "$API_BASE_URL/internal/cron/refresh-jobs" \
+            -H "X-Cron-Secret: $CRON_SECRET")
+
+          echo "$response" | tee response.json
+
+          # Surface the counts in the run summary, so a silently broken adapter is visible in the
+          # scheduler's own history rather than only in the database. Story 28.
+          {
+            echo "### Refresh result"
+            echo ""
+            echo '```json'
+            echo "$response"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report a run that closed everything
+        run: |
+          # A rule or adapter change that starts closing every posting is the failure that hides
+          # best: the run succeeds, the counts look busy, and the feed empties. Anything above this
+          # many closures in one run is worth a human looking, and is annotated rather than failed
+          # because a genuinely large closure day is possible.
+          closed=$(python3 -c "import json;print(json.load(open('response.json')).get('closed',0))")
+          if [ "$closed" -gt 500 ]; then
+            echo "::warning::This run closed $closed postings. Check the adapters before trusting the feed."
+          fi
+          suspicious=$(python3 -c "import json;print(len(json.load(open('response.json')).get('suspicious_boards',[])))")
+          if [ "$suspicious" -gt 0 ]; then
+            echo "::warning::$suspicious board(s) returned an empty list while holding open jobs."
+          fi
