@@ -19,17 +19,39 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.adapters.llm_client import LLMClient, LLMError, get_llm_client
 from app.config import get_settings
 from app.db import get_session
 from app.services.dedup_service import deduplicate
 from app.services.ingest_service import refresh_all_boards
 from app.services.job_service import classify_stored_jobs
+from app.services.skill_enrichment_service import enrich_job_skills
 
 router = APIRouter(prefix="/internal/cron", tags=["internal"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 _NOT_FOUND = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+
+def _optional_llm() -> LLMClient | None:
+    """The configured client, or None when there is no key and in demo mode.
+
+    None rather than an exception: enrichment has a working fallback, so an unconfigured
+    deployment should read descriptions with the vocabulary and say so, not fail a refresh.
+
+    Demo mode deliberately gets None rather than the fixture client. A recorded fixture cannot
+    honestly answer for thousands of postings it has never seen, and returning one anyway would
+    label a vocabulary-only reading as a model reading — the exact deception non-negotiable 4
+    forbids. Demo mode therefore reads with the vocabulary and the interface says so.
+    """
+    settings = get_settings()
+    if settings.demo_mode:
+        return None
+    try:
+        return get_llm_client()
+    except LLMError:
+        return None
 
 
 async def verify_cron_secret(
@@ -78,9 +100,19 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
     summary = await refresh_all_boards(session)
     classified = await classify_stored_jobs(session)
 
-    # No inference client is passed. Dedup's deterministic bands do the work, and the deployed
-    # demo has no key at all — a refresh that needed one would do nothing in the environment the
-    # judges use. The ambiguous band degrades to distinct, which is the safe direction.
+    # Skills are read here rather than at render time, per ADR 0011: the feed is forbidden from
+    # calling a model, and the reading is identical for every student so paying for it once per
+    # posting is the whole saving. It must follow classification, because which postings are
+    # worth reading is decided by the seniority and country classification just derived.
+    #
+    # An inference client is passed when one is configured. Unlike dedup, this call has a
+    # useful fallback: with no key the vocabulary still produces a skill set, so the score
+    # works everywhere and simply says which reading produced it.
+    enriched = await enrich_job_skills(session, llm=_optional_llm())
+
+    # No inference client is passed to dedup. Its deterministic bands do the work, and the
+    # deployed demo has no key at all — a refresh that needed one would do nothing in the
+    # environment the judges use. The ambiguous band degrades to distinct, the safe direction.
     dedup = await deduplicate(session)
 
     return {
@@ -111,6 +143,15 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
         "deadline_reached": summary.deadline_reached,
         "elapsed_seconds": summary.elapsed_seconds,
         "classified": classified,
+        "skills_read": {
+            "considered": enriched.considered,
+            "enriched": enriched.enriched,
+            "batches": enriched.batches,
+            "failed_batches": enriched.failed_batches,
+            "added_by_model": enriched.added_by_model,
+            "discarded_unevidenced": enriched.discarded,
+            "by_basis": enriched.basis_counts,
+        },
         "deduplicated": {
             "compared": dedup.compared,
             "collapsed": dedup.collapsed,

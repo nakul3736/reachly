@@ -10,6 +10,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -101,6 +102,22 @@ class Job(Base):
     # pointing at something else.
     content_fingerprint: Mapped[str | None] = mapped_column(
         String(64), default=None, index=True
+    )
+
+    # Skills read out of the description, per ADR 0011. Stored on the posting rather than
+    # computed per render because the reading is the same for every student, and the feed is
+    # forbidden from making model calls.
+    extracted_skills: Mapped[list[str] | None] = mapped_column(JSONB, default=None)
+
+    # vocabulary | model. Which reading produced the set above. Shown in the interface, because
+    # a student comparing two scores deserves to know one posting was read more thoroughly.
+    skills_basis: Mapped[str | None] = mapped_column(String(16), default=None)
+
+    # Null means no reading has finished. Deliberately not set when enrichment fails, so an
+    # outage is retried rather than remembered as a completed reading — the same rule that keeps
+    # a failed board fetch from closing anything.
+    skills_extracted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
     )
 
     __table_args__ = (
