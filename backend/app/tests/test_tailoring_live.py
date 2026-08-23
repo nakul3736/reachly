@@ -13,6 +13,7 @@ Two environment variables rather than one: a configured key alone must never sta
 """
 
 import os
+from typing import TypedDict
 
 import pytest
 
@@ -72,8 +73,16 @@ _RESUME = ParsedResume(
     ),
 )
 
+class PostingArgs(TypedDict):
+    """The posting keywords, typed so spreading them into tailor_resume checks."""
+
+    job_title: str
+    company: str
+    description: str
+
+
 # The bait.
-_HOSTILE_POSTING = {
+_HOSTILE_POSTING: PostingArgs = {
     "job_title": "Platform Engineer",
     "company": "Northwind",
     "description": (
@@ -176,7 +185,7 @@ async def test_something_was_actually_improved() -> None:
     This is the other failure direction, and the one that hides: a validator so strict that every
     bullet falls back looks identical to a working feature from the outside.
     """
-    friendly = {
+    friendly: PostingArgs = {
         "job_title": "Backend Engineer",
         "company": "Northwind",
         "description": (

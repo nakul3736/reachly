@@ -50,10 +50,23 @@ async def health(
     Always answers 200: the API is demonstrably responding, and a pinger should
     not treat a degraded database as the service being down. The distinction is
     carried in the body so a human reading it learns something.
+
+    The inference configuration is reported too, and it is not decoration. Both values are
+    settable per environment, and both have already produced failures that looked like bugs in
+    unrelated features: demo mode made a real resume upload fail with a parse error, and a model
+    whose free-tier quota had run out made tailoring silently return every bullet unchanged.
+    Neither was visible from outside the process. Naming them here turns a confusing symptom into
+    a one-request diagnosis.
+
+    No secret is exposed — a model name and a boolean, never the key.
     """
+    settings = get_settings()
     return {
         "status": "ok" if database_up else "degraded",
         "database": "up" if database_up else "down",
+        "inference": "recorded" if settings.demo_mode else "live",
+        "model": settings.gemini_model,
+        "key_configured": "yes" if settings.gemini_api_key else "no",
     }
 
 

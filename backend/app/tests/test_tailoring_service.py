@@ -4,12 +4,22 @@ The behaviour that matters is what happens when the model misbehaves, because th
 whole feature exists for and the case a demo never shows.
 """
 
+from typing import TypedDict
+
 from app.adapters.llm_client import LLMUnavailable
 from app.domain.parsed_resume import Bullet, ExperienceEntry, ParsedResume
 from app.domain.tailoring import RejectionReason
 from app.services.tailoring_service import tailor_resume
 
-JOB = {
+
+class PostingArgs(TypedDict):
+    """The posting keywords, typed so spreading them into tailor_resume checks."""
+
+    job_title: str
+    company: str
+    description: str
+
+JOB: PostingArgs = {
     "job_title": "Backend Engineer",
     "company": "Northwind",
     "description": "You will build Python services and deploy them on Kubernetes.",

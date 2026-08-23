@@ -23,8 +23,25 @@ services:
     healthCheckPath: /api/v1/health
 
     envVars:
+      # False so that a real resume is parsed by the real model. Demo mode serves recorded
+      # responses, and a recorded response can only answer for resumes somebody recorded — a
+      # judge or a student uploading their own PDF gets the demo parse, whose contents the
+      # evidence check then correctly strips, leaving a resume with no roles and an upload that
+      # looks broken. That is the failure this value exists to avoid.
+      #
+      # Set it back to "true" here or in the dashboard to run the whole product with no API key at
+      # all, per ADR 0010. The seeded demo account works either way.
       - key: DEMO_MODE
-        value: "true"
+        value: "false"
+
+      # Declared rather than left to the code default so it is visible and changeable in the
+      # dashboard without a deploy. Free-tier quotas are per model, and the model that has room in
+      # it today may not tomorrow: gemini-3.6-flash returned 429 for every request on 23 Aug while
+      # this one returned 200 with the same key in the same second. When that happens the fix
+      # should be a dropdown, not a commit.
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+
       - key: DATABASE_URL
         sync: false
       - key: JWT_SECRET
