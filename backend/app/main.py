@@ -5,7 +5,17 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, cron, jobs, outreach, resumes, sources, students, tailoring
+from app.api import (
+    applications,
+    auth,
+    cron,
+    jobs,
+    outreach,
+    resumes,
+    sources,
+    students,
+    tailoring,
+)
 from app.config import get_settings
 from app.db import database_is_reachable, dispose_engine
 from app.errors import register_error_handlers
@@ -77,6 +87,7 @@ router.include_router(sources.router)
 router.include_router(jobs.router)
 router.include_router(tailoring.router)
 router.include_router(outreach.router)
+router.include_router(applications.router)
 app.include_router(router)
 
 # Not under /api/v1: these are operational endpoints, not part of the student-facing API.

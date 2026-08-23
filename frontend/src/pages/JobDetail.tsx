@@ -5,22 +5,30 @@
  * and a 404 would be a lie about something that existed.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import { Fact, ReceiptLine, VerificationChip } from "../components/Receipt";
 import { ScoreBar } from "../components/ScoreBar";
+import { type ApplicationStatus, applicationKeys, trackJob } from "../lib/applications";
+import { ApiError } from "../lib/auth";
 import { fetchJob, queryKeys } from "../lib/jobs";
 import { isStale, postedAge } from "../lib/time";
 
 export default function JobDetailPage() {
   const { id } = useParams();
   const jobId = Number(id);
+  const cache = useQueryClient();
 
   const job = useQuery({
     queryKey: queryKeys.job(jobId),
     queryFn: () => fetchJob(jobId),
     enabled: Number.isFinite(jobId),
+  });
+
+  const track = useMutation({
+    mutationFn: (status: ApplicationStatus) => trackJob(jobId, status),
+    onSuccess: () => cache.invalidateQueries({ queryKey: applicationKeys.pipeline }),
   });
 
   return (
@@ -218,6 +226,44 @@ export default function JobDetailPage() {
             >
               Draft an introduction
             </Link>
+          </div>
+
+          {/*
+            Two separate acts, deliberately. Clicking Apply opens a tab; Reachly cannot see what
+            happens there, and marking the posting applied because a link was clicked would be wrong
+            in the direction that hurts — a student who read the form and closed it would find a lie
+            in their own tracker. So saying "I applied" is its own button.
+          */}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => track.mutate("saved")}
+              disabled={track.isPending}
+              className="rounded-card border border-rule px-4 py-2 text-[15px] text-slate hover:border-ink hover:text-ink disabled:opacity-60"
+            >
+              Track this
+            </button>
+            <button
+              type="button"
+              onClick={() => track.mutate("applied")}
+              disabled={track.isPending}
+              className="rounded-card border border-rule px-4 py-2 text-[15px] text-slate hover:border-ink hover:text-ink disabled:opacity-60"
+            >
+              I applied
+            </button>
+            {track.isSuccess && (
+              <span className="font-receipt text-[11px] tracking-[0.02em] text-confirmed">
+                saved to{" "}
+                <Link to="/applications" className="underline underline-offset-2">
+                  my applications
+                </Link>
+              </span>
+            )}
+            {track.isError && (
+              <span className="font-receipt text-[11px] tracking-[0.02em] text-closed">
+                {(track.error as ApiError)?.message ?? "That could not be saved."}
+              </span>
+            )}
           </div>
 
           <section className="mt-6 rounded-card border border-rule bg-paper p-5 sm:p-6">

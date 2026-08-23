@@ -18,6 +18,7 @@ Tables arrive with the features that read them, per
 queries is a guess awaiting correction.
 """
 
+from app.models.application import Application, ApplicationStatus
 from app.models.board_token import BoardToken
 from app.models.job import DedupVerdict, Job
 from app.models.match_score import MatchScore
@@ -28,6 +29,8 @@ from app.models.tailored_resume import TailoredResume
 from app.models.user import User
 
 __all__ = [
+    "Application",
+    "ApplicationStatus",
     "BoardToken",
     "DedupVerdict",
     "Job",

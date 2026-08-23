@@ -114,6 +114,8 @@ export const api = {
     ),
   postForm: <T>(path: string, form: FormData) =>
     request<T>(path, { method: "POST", body: form }, { authenticated: true }),
+  // Returns 204 with no body, which `request` already handles by resolving undefined.
+  del: (path: string) => request<void>(path, { method: "DELETE" }, { authenticated: true }),
 };
 
 async function authenticate(path: string, email: string, password: string): Promise<void> {

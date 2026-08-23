@@ -10,6 +10,7 @@ import {
 } from "react-router-dom";
 
 import { clearToken, storedToken } from "./lib/auth";
+import { Applications } from "./pages/Applications";
 import Feed from "./pages/Feed";
 import JobDetailPage from "./pages/JobDetail";
 import { OutreachPage } from "./pages/Outreach";
@@ -45,6 +46,14 @@ export default function App() {
             <Route path="/jobs/:id/tailor" element={<TailorPage />} />
             <Route path="/jobs/:id/outreach" element={<OutreachPage />} />
             <Route path="/signin" element={<SignIn />} />
+            <Route
+              path="/applications"
+              element={
+                <RequireAccount>
+                  <Applications />
+                </RequireAccount>
+              }
+            />
             <Route
               path="/profile"
               element={
@@ -101,6 +110,12 @@ function Chrome({ children }: { children: React.ReactNode }) {
             </NavLink>
             {signedIn ? (
               <>
+                <NavLink
+                  to="/applications"
+                  current={location.pathname === "/applications"}
+                >
+                  Applications
+                </NavLink>
                 <NavLink to="/profile" current={location.pathname === "/profile"}>
                   Profile
                 </NavLink>
