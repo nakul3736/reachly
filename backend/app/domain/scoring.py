@@ -157,9 +157,7 @@ _STOPWORDS = frozenset(
 
 def _words(text: str) -> list[str]:
     return [
-        token.casefold()
-        for token in _TOKEN.findall(text)
-        if token.casefold() not in _STOPWORDS
+        token.casefold() for token in _TOKEN.findall(text) if token.casefold() not in _STOPWORDS
     ]
 
 
@@ -207,18 +205,25 @@ def _score_experience(
     return round(EXPERIENCE_WEIGHT * (1.0 - penalty)), ComponentState.SHORT
 
 
-def _score_keywords(resume_text: str, description: str) -> tuple[int, ComponentState]:
+def _keyword_overlap(
+    resume_text: str, description: str
+) -> tuple[int, ComponentState, list[str]]:
     """Vocabulary overlap between the resume and the posting, weighted by term rarity.
 
     A BM25-shaped score rather than BM25 proper: with one document there is no corpus to draw
     document frequencies from, so rarity is approximated by how often a term repeats inside this
     description. The effect that matters is the same — a posting using the student's vocabulary
     throughout scores above one that mentions it once in a list of nice-to-haves.
+
+    Returns the terms as well as the points, ordered by what each contributed. A student told
+    their vocabulary overlap is 12 of 20 learns nothing; shown that the shared words are
+    `postgresql, fastapi, pytest` and the absent ones are `kubernetes, terraform`, they know what
+    to write next.
     """
     resume_words = set(_words(resume_text))
     description_words = _words(description)
     if not resume_words or not description_words:
-        return 0, ComponentState.UNSTATED
+        return 0, ComponentState.UNSTATED, []
 
     counts: dict[str, int] = {}
     for word in description_words:
@@ -228,19 +233,27 @@ def _score_keywords(resume_text: str, description: str) -> tuple[int, ComponentS
     # second, so a description repeating one word cannot dominate.
     k = 1.5
     overlap = 0.0
+    contributions: list[tuple[float, str]] = []
     for word in resume_words & set(description_words):
         tf = counts[word]
-        overlap += (tf * (k + 1)) / (tf + k)
+        weight = (tf * (k + 1)) / (tf + k)
+        overlap += weight
+        contributions.append((weight, word))
 
     # Normalised against the resume's own vocabulary, so a longer resume is not penalised.
     ceiling = len(resume_words) * ((k + 1) / (1 + k)) * 2.0
     share = min(overlap / ceiling, 1.0) if ceiling else 0.0
-    return round(KEYWORD_WEIGHT * share), ComponentState.SCORED
+
+    shared = [word for _, word in sorted(contributions, key=lambda c: (-c[0], c[1]))]
+    return round(KEYWORD_WEIGHT * share), ComponentState.SCORED, shared
 
 
-def _score_freshness(
-    posted_at: datetime | None, now: datetime
-) -> tuple[int, ComponentState]:
+def _score_keywords(resume_text: str, description: str) -> tuple[int, ComponentState]:
+    points, state, _ = _keyword_overlap(resume_text, description)
+    return points, state
+
+
+def _score_freshness(posted_at: datetime | None, now: datetime) -> tuple[int, ComponentState]:
     if posted_at is None:
         # Providers omit the date constantly, and the student is not at fault for that.
         return round(FRESHNESS_WEIGHT * _NEUTRAL_SHARE), ComponentState.UNSTATED
@@ -252,6 +265,122 @@ def _score_freshness(
 
     remaining = max(0.0, 1.0 - age_days / _FRESHNESS_HORIZON_DAYS)
     return math.floor(FRESHNESS_WEIGHT * remaining), ComponentState.SCORED
+
+
+@dataclass(frozen=True)
+class ScoreExplanation:
+    """Every number the score was derived from, so the arithmetic can be redone by hand.
+
+    Separate from `MatchBreakdown` on purpose. A breakdown is what gets stored and ranked, and it
+    is reconstructed from database columns on a cache hit — so any derivation field added to it
+    would come back empty for exactly the postings a student has already looked at, which is worse
+    than not offering the explanation at all. This is computed fresh for a single posting, which
+    costs a few milliseconds, and is therefore always complete.
+
+    It shares the private scoring functions with `score_job` rather than reimplementing them. An
+    explanation that can disagree with the number it explains is a liability, not a feature.
+
+    The fields are facts, not sentences. How to word "you are two years short of a stated
+    requirement" belongs to the interface, which knows whether it has room for it.
+    """
+
+    total: int
+
+    # Skills: matched over asked, times the weight. The denominator is the posting's list.
+    skill_points: int
+    skill_weight: int
+    skill_state: ComponentState
+    skills_asked: int
+    matched_skills: list[str]
+    missing_skills: list[str]
+
+    # Experience: the shortfall against what the posting stated, linear to a ten-year cap.
+    experience_points: int
+    experience_weight: int
+    experience_state: ComponentState
+    student_years: float
+    required_years: float | None
+    requirement_basis: Basis
+    requirement_phrase: str | None
+    max_gap_years: float
+    preference_penalty_scale: float
+
+    # Keywords: which of the student's own words this posting uses.
+    keyword_points: int
+    keyword_weight: int
+    keyword_state: ComponentState
+    shared_keywords: list[str]
+
+    # Freshness: how old, against a one-month horizon.
+    freshness_points: int
+    freshness_weight: int
+    freshness_state: ComponentState
+    age_days: float | None
+    freshness_horizon_days: int
+
+    # What an unknown component is worth, so the interface can say "half of 30, because the
+    # posting did not say" instead of leaving a student to guess where 15 came from.
+    neutral_share: float
+
+
+# How many shared words to report. Enough to be evidence, few enough to be read.
+_SHARED_KEYWORD_LIMIT = 24
+
+
+def explain_score(
+    profile: StudentProfile,
+    *,
+    posting_skills: set[str],
+    requirement: ExperienceRequirement,
+    description: str,
+    posted_at: datetime | None,
+    now: datetime,
+) -> ScoreExplanation:
+    """Score one posting and return the derivation alongside the result.
+
+    Takes a profile rather than `profile | None`: there is nothing to explain about a student who
+    has uploaded no resume, and the caller has to handle that case anyway to say something more
+    useful than a page of zeros.
+    """
+    skill_points, skill_state, matched, missing = _score_skills(profile.skills, posting_skills)
+    experience_points, experience_state = _score_experience(
+        profile.years_experience, requirement
+    )
+    keyword_points, keyword_state, shared = _keyword_overlap(profile.resume_text, description)
+    freshness_points, freshness_state = _score_freshness(posted_at, now)
+
+    age_days = None
+    if posted_at is not None:
+        age_days = max(0.0, (now - posted_at).total_seconds() / 86_400)
+
+    return ScoreExplanation(
+        total=skill_points + experience_points + keyword_points + freshness_points,
+        skill_points=skill_points,
+        skill_weight=SKILL_WEIGHT,
+        skill_state=skill_state,
+        skills_asked=len(posting_skills),
+        matched_skills=matched,
+        missing_skills=missing,
+        experience_points=experience_points,
+        experience_weight=EXPERIENCE_WEIGHT,
+        experience_state=experience_state,
+        student_years=profile.years_experience,
+        required_years=requirement.years,
+        requirement_basis=requirement.basis,
+        requirement_phrase=requirement.phrase,
+        max_gap_years=_MAX_GAP_YEARS,
+        preference_penalty_scale=_PREFERENCE_PENALTY_SCALE,
+        keyword_points=keyword_points,
+        keyword_weight=KEYWORD_WEIGHT,
+        keyword_state=keyword_state,
+        shared_keywords=shared[:_SHARED_KEYWORD_LIMIT],
+        freshness_points=freshness_points,
+        freshness_weight=FRESHNESS_WEIGHT,
+        freshness_state=freshness_state,
+        age_days=age_days,
+        freshness_horizon_days=_FRESHNESS_HORIZON_DAYS,
+        neutral_share=_NEUTRAL_SHARE,
+    )
 
 
 def score_job(
@@ -288,7 +417,9 @@ def score_job(
         )
 
     skill_points, skill_state, matched, missing = _score_skills(profile.skills, posting_skills)
-    experience_points, experience_state = _score_experience(profile.years_experience, requirement)
+    experience_points, experience_state = _score_experience(
+        profile.years_experience, requirement
+    )
     keyword_points, keyword_state = _score_keywords(profile.resume_text, description)
     freshness_points, freshness_state = _score_freshness(posted_at, now)
 

@@ -15,7 +15,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.experience import Basis, ExperienceRequirement, parse_experience_requirement
-from app.domain.scoring import MatchBreakdown, StudentProfile, score_job
+from app.domain.scoring import (
+    MatchBreakdown,
+    ScoreExplanation,
+    StudentProfile,
+    explain_score,
+    score_job,
+)
 from app.domain.skill_extraction import extract_skills, normalise_skill_list
 from app.models.job import Job
 from app.models.match_score import MatchScore
@@ -80,7 +86,9 @@ async def score_page(
         MatchScore.resume_master_id == resume_master_id,
         MatchScore.job_id.in_(job_ids),
     )
-    existing = {row.job_id: row for row in (await session.execute(existing_stmt)).scalars().all()}
+    existing = {
+        row.job_id: row for row in (await session.execute(existing_stmt)).scalars().all()
+    }
 
     results: dict[int, MatchBreakdown] = {}
     to_insert: list[MatchScore] = []
@@ -120,7 +128,9 @@ async def score_page(
                 matched_skills=breakdown.matched_skills,
                 missing_skills=breakdown.missing_skills,
                 required_years=breakdown.required_years,
-                requirement_basis=breakdown.requirement_basis.value if breakdown.requirement_basis else None,
+                requirement_basis=breakdown.requirement_basis.value
+                if breakdown.requirement_basis
+                else None,
                 requirement_phrase=breakdown.requirement_phrase,
             )
         )
@@ -132,9 +142,36 @@ async def score_page(
     return results
 
 
-def _posting_facts(
-    job: Job, now: datetime
-) -> tuple[set[str], ExperienceRequirement]:
+async def explain_job_score(
+    session: AsyncSession,
+    *,
+    job: Job,
+    profile: StudentProfile,
+) -> ScoreExplanation:
+    """The full derivation for one posting, computed rather than read.
+
+    Deliberately not served from the `match_scores` cache. That row holds what ranking needs, and
+    rebuilding an explanation from it would silently drop the derivation for any posting the
+    student has already seen. One posting scored fresh is a few milliseconds — far cheaper than
+    storing facts twice and keeping them agreed.
+
+    The posting's own readings still come from the cache on the row, because those are
+    student-independent and expensive.
+    """
+    now = datetime.now(UTC)
+    posting_skills, requirement = _posting_facts(job, now)
+
+    return explain_score(
+        profile,
+        posting_skills=posting_skills,
+        requirement=requirement,
+        description=job.description or "",
+        posted_at=job.posted_at or job.first_seen_at,
+        now=now,
+    )
+
+
+def _posting_facts(job: Job, now: datetime) -> tuple[set[str], ExperienceRequirement]:
     """What the posting asks for, read once per posting rather than once per student.
 
     Both halves of this are student-independent, and both were being recomputed on every render
@@ -190,7 +227,9 @@ def _row_to_breakdown(row: MatchScore) -> MatchBreakdown:
         matched_skills=row.matched_skills or [],
         missing_skills=row.missing_skills or [],
         required_years=row.required_years,
-        requirement_basis=Basis(row.requirement_basis) if row.requirement_basis else Basis.UNSTATED,
+        requirement_basis=Basis(row.requirement_basis)
+        if row.requirement_basis
+        else Basis.UNSTATED,
         requirement_phrase=row.requirement_phrase,
         is_complete=True,
     )
@@ -206,9 +245,7 @@ def _row_to_breakdown(row: MatchScore) -> MatchBreakdown:
 MAX_RANKED = 100
 
 
-def rank_by_score(
-    jobs: list[Job], scores: dict[int, MatchBreakdown]
-) -> list[Job]:
+def rank_by_score(jobs: list[Job], scores: dict[int, MatchBreakdown]) -> list[Job]:
     """Order postings by score, highest first, with a stable tiebreak.
 
     The tiebreak is the job id, not the score alone. Without it, two postings on the same total

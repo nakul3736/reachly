@@ -68,17 +68,18 @@ export function JobCard({
 
           {/* The decomposed score joins this column, as the card's original note anticipated.
               The bar is a diagnosis in shape only - it can show that the experience segment is
-              short without saying which sentence made it short. So it carries an explicit route
-              to the reasoning. Without this the only path was the job title, which reads as "go
-              to the posting" rather than "show me why", and the receipt went unfound. */}
+              short without saying which sentence made it short. So it carries a route to the
+              arithmetic itself, not to the posting: an earlier version of this link went to the
+              job detail page, which a student had already seen and which answers a different
+              question. */}
           {job.score ? (
             <div className="flex flex-col items-start gap-1 sm:items-end">
               <ScoreBar score={job.score} compact />
               <Link
-                to={`/jobs/${job.id}`}
+                to={`/jobs/${job.id}/score`}
                 className="font-receipt text-[11px] tracking-[0.02em] text-slate underline decoration-rule underline-offset-2 hover:text-ink hover:decoration-ink"
               >
-                why this scored {job.score.total}
+                how this {job.score.total} was calculated
               </Link>
             </div>
           ) : (

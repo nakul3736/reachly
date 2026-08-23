@@ -11,12 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.domain.role_family import ROLE_FAMILIES, Seniority
 from app.domain.scoring import MatchBreakdown
+from app.errors import DomainError
 from app.models.student import Student
 from app.security import read_access_token
 from app.services import job_service
 from app.services.job_service import JobFilters
 from app.services.scoring_service import (
     MAX_RANKED,
+    explain_job_score,
     get_student_profile,
     rank_by_score,
     score_page,
@@ -315,3 +317,137 @@ async def get_job(
                 detail.score = _to_schema(breakdown)
 
     return detail
+
+
+class ScoreUnavailable(DomainError):
+    """There is no score to explain, which is not the same as a score of zero.
+
+    409 rather than 401: the request was well formed and the reader may well be signed in. What is
+    missing is a resume to score against, and the message says which of the two it is.
+    """
+
+    status_code = 409
+    code = "score_unavailable"
+
+
+class ScoreComponent(BaseModel):
+    """One weighted component, with the facts its arithmetic used.
+
+    `weight` travels with every component so the interface never hardcodes 40/30/20/10. If a weight
+    changes in ADR 0003 the explanation changes with it, instead of quietly continuing to claim the
+    old denominator.
+    """
+
+    name: str
+    points: int
+    weight: int
+    state: str
+
+    # The derivation as data rather than a prewritten sentence, so the interface decides the
+    # wording and a future client is not stuck with English chosen here.
+    facts: dict[str, object] = {}
+
+
+class ScoreExplanationOut(BaseModel):
+    """Everything needed to redo the arithmetic by hand."""
+
+    job_id: int
+    total: int
+    components: list[ScoreComponent]
+
+    matched_skills: list[str]
+    missing_skills: list[str]
+    shared_keywords: list[str]
+
+    requirement_phrase: str | None
+    neutral_share: float
+
+
+@router.get("/{job_id}/score", response_model=ScoreExplanationOut)
+async def explain_job(
+    job_id: int,
+    session: AsyncSession = Depends(get_session),
+    identity: tuple[Student | None, int | None] = Depends(_optional_student),
+) -> ScoreExplanationOut:
+    """Why this posting scored what it did, component by component.
+
+    A separate endpoint from the posting because it answers a different question: not "what is this
+    job" but "check your working". It returns the denominators, the student's own parsed years, the
+    words that actually overlapped, and the constants — enough to recompute the total on paper and
+    catch Reachly being wrong.
+
+    ADR 0003 chose deterministic scoring partly so this endpoint could exist. A model-assigned
+    number can be shown but not audited.
+    """
+    student, resume_id = identity
+    if student is None or resume_id is None:
+        raise ScoreUnavailable(
+            "Sign in and upload a resume to see how a posting was scored. Reachly scores "
+            "postings against your resume, so without one there is nothing to explain."
+        )
+
+    profile = await get_student_profile(session, student.id)
+    if profile is None:
+        raise ScoreUnavailable(
+            "Your resume has not finished parsing, so there is no profile to score against yet."
+        )
+
+    job = await job_service.get_job(session, job_id)
+    explanation = await explain_job_score(session, job=job, profile=profile)
+
+    return ScoreExplanationOut(
+        job_id=job.id,
+        total=explanation.total,
+        components=[
+            ScoreComponent(
+                name="skills",
+                points=explanation.skill_points,
+                weight=explanation.skill_weight,
+                state=explanation.skill_state.value,
+                facts={
+                    "asked": explanation.skills_asked,
+                    "matched": len(explanation.matched_skills),
+                },
+            ),
+            ScoreComponent(
+                name="experience",
+                points=explanation.experience_points,
+                weight=explanation.experience_weight,
+                state=explanation.experience_state.value,
+                facts={
+                    "required_years": explanation.required_years,
+                    "your_years": explanation.student_years,
+                    "basis": explanation.requirement_basis.value,
+                    "phrase": explanation.requirement_phrase,
+                    "gap_cap_years": explanation.max_gap_years,
+                    "preference_scale": explanation.preference_penalty_scale,
+                },
+            ),
+            ScoreComponent(
+                name="keywords",
+                points=explanation.keyword_points,
+                weight=explanation.keyword_weight,
+                state=explanation.keyword_state.value,
+                facts={"shared_terms": len(explanation.shared_keywords)},
+            ),
+            ScoreComponent(
+                name="freshness",
+                points=explanation.freshness_points,
+                weight=explanation.freshness_weight,
+                state=explanation.freshness_state.value,
+                facts={
+                    "age_days": (
+                        round(explanation.age_days, 1)
+                        if explanation.age_days is not None
+                        else None
+                    ),
+                    "horizon_days": explanation.freshness_horizon_days,
+                },
+            ),
+        ],
+        matched_skills=explanation.matched_skills,
+        missing_skills=explanation.missing_skills,
+        shared_keywords=explanation.shared_keywords,
+        requirement_phrase=explanation.requirement_phrase,
+        neutral_share=explanation.neutral_share,
+    )

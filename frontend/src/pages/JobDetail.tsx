@@ -114,6 +114,17 @@ export default function JobDetailPage() {
                 Why this scored {job.data.score.total}
               </h2>
 
+              {/* This panel is a summary: which terms matched, and the sentence the requirement
+                  came from. It does not show the arithmetic - the denominators, your own parsed
+                  years, the constants - and a student who wants to check the working rather than
+                  read a conclusion needs those. */}
+              <Link
+                to={`/jobs/${job.data.id}/score`}
+                className="mt-1 inline-block font-receipt text-[11px] tracking-[0.02em] text-slate underline decoration-rule underline-offset-2 hover:text-ink hover:decoration-ink"
+              >
+                see the full arithmetic, component by component
+              </Link>
+
               <div className="mt-3">
                 <ScoreBar score={job.data.score} />
               </div>

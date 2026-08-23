@@ -13,6 +13,7 @@ import { clearToken, storedToken } from "./lib/auth";
 import Feed from "./pages/Feed";
 import JobDetailPage from "./pages/JobDetail";
 import Profile from "./pages/Profile";
+import { ScoreReportPage } from "./pages/ScoreReport";
 import SignIn from "./pages/SignIn";
 import { TailorPage } from "./pages/Tailor";
 
@@ -39,6 +40,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Feed />} />
             <Route path="/jobs/:id" element={<JobDetailPage />} />
+            <Route path="/jobs/:id/score" element={<ScoreReportPage />} />
             <Route path="/jobs/:id/tailor" element={<TailorPage />} />
             <Route path="/signin" element={<SignIn />} />
             <Route
