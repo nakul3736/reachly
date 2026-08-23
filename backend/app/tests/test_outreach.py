@@ -15,9 +15,11 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db import get_session_factory
 from app.domain.outreach import build_outreach_draft
 from app.models.board_token import BoardToken
 from app.models.job import Job
+from app.models.outreach_draft import OutreachDraftRow
 from app.models.resume import ResumeMaster
 from app.models.student import Student
 from app.models.user import User
@@ -339,3 +341,89 @@ class TestTheOutreachEndpoint:
         response = await client.get(f"/api/v1/jobs/{job.id}/outreach")
 
         assert response.status_code == 401
+
+    async def test_the_draft_is_stored_so_a_second_visit_costs_nothing(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """Queried through a separate session, because in this codebase a flush is not a save."""
+        token = await _student(session)
+        job = await _job(session, company="Acme", source_job_id="o11")
+        await session.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        first = await client.get(f"/api/v1/jobs/{job.id}/outreach", headers=headers)
+        second = await client.get(f"/api/v1/jobs/{job.id}/outreach", headers=headers)
+
+        assert first.status_code == 200
+        assert second.json()["body"] == first.json()["body"]
+
+        async with get_session_factory()() as other:
+            stored = (
+                (
+                    await other.execute(
+                        select(OutreachDraftRow).where(OutreachDraftRow.job_id == job.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        assert len(stored) == 1, "one row per posting per upload, not one per visit"
+        assert stored[0].body == first.json()["body"]
+
+    async def test_the_response_says_whether_it_was_written_or_assembled(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """A template presented as writing is a lie the student discovers by reading it."""
+        token = await _student(session)
+        job = await _job(session, company="Acme", source_job_id="o12")
+        await session.commit()
+
+        response = await client.get(
+            f"/api/v1/jobs/{job.id}/outreach", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        # Under DEMO_MODE there is no recorded reply for this prompt, so the fallback is expected —
+        # and the flag must report that honestly rather than defaulting to the flattering answer.
+        assert response.json()["written"] is False
+
+    async def test_rewriting_replaces_the_stored_draft_rather_than_adding_one(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        token = await _student(session)
+        job = await _job(session, company="Acme", source_job_id="o13")
+        await session.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.get(f"/api/v1/jobs/{job.id}/outreach", headers=headers)
+        again = await client.post(f"/api/v1/jobs/{job.id}/outreach/rewrite", headers=headers)
+
+        assert again.status_code == 200
+
+        async with get_session_factory()() as other:
+            rows = (
+                (
+                    await other.execute(
+                        select(OutreachDraftRow).where(OutreachDraftRow.job_id == job.id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        assert len(rows) == 1
+
+    async def test_rewriting_is_not_reachable_by_a_get(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """It spends a model call and replaces stored text, so a prefetch must not trigger it."""
+        token = await _student(session)
+        job = await _job(session, company="Acme", source_job_id="o14")
+        await session.commit()
+
+        response = await client.get(
+            f"/api/v1/jobs/{job.id}/outreach/rewrite",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 405

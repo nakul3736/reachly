@@ -15,12 +15,22 @@ export interface Outreach {
   body: string;
   /** Why the message says what it says. Every specific claim in it has a line here. */
   evidence: string[];
+  /**
+   * True when a model wrote it from the resume and the posting and the result passed the fabrication
+   * check. False when it is the assembled fallback — surfaced, because presenting a template as
+   * writing is a small lie the student discovers by reading it.
+   */
+  written: boolean;
   apply_url: string;
   other_open_roles: number;
 }
 
 export const fetchOutreach = (jobId: number) =>
   api.get<Outreach>(`/api/v1/jobs/${jobId}/outreach`);
+
+/** Generation is not deterministic, so this is a genuinely different email, not a retry. */
+export const rewriteOutreach = (jobId: number) =>
+  api.post<Outreach>(`/api/v1/jobs/${jobId}/outreach/rewrite`, {});
 
 export const outreachKeys = {
   outreach: (jobId: number) => ["outreach", jobId] as const,

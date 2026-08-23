@@ -104,9 +104,21 @@ function BulletRow({
         </div>
       )}
 
-      {!offered && !refused && (
+      {/*
+        Three different silences used to look identical here, and one of them was a lie. "left as you
+        wrote it" reads as a judgement — Reachly considered this and approved of it — which is exactly
+        wrong when the model was never asked, or answered and omitted the line. A student whose call
+        hit a rate limit concluded their resume already matched the posting perfectly.
+      */}
+      {!offered && !refused && bullet.unavailable && (
+        <p className="mt-2 font-receipt text-[11px] leading-[1.5] tracking-[0.02em] text-closed">
+          no suggestion for this line — Reachly did not get an answer for it
+        </p>
+      )}
+
+      {!offered && !refused && !bullet.unavailable && (
         <p className="mt-2 font-receipt text-[11px] tracking-[0.02em] text-slate">
-          left as you wrote it
+          Reachly read this line and had nothing better to offer
         </p>
       )}
 
@@ -227,6 +239,14 @@ export function TailorPage() {
     .map(([bullet_id, instruction]) => ({ bullet_id, instruction }));
 
   const suggestions = (result?.bullets ?? []).filter((b) => b.changed && !b.rejected_reason);
+
+  /**
+   * Every bullet came back unattempted, which means the model was never reached — not that the resume
+   * needs no work. Saying so is the difference between an error and a false verdict, and the student
+   * can retry instead of sitting in front of their own unchanged sentences drawing the wrong lesson.
+   */
+  const bullets = result?.bullets ?? [];
+  const nothingAttempted = bullets.length > 0 && bullets.every((b) => b.unavailable);
   const unsavedApprovals =
     result != null &&
     (approvedIds.size !== result.approved_bullet_ids.length ||
@@ -265,6 +285,28 @@ export function TailorPage() {
             for <span className="font-medium text-ink">{result.job_title}</span> at{" "}
             {result.company_name}
           </p>
+        )}
+
+        {nothingAttempted && (
+          <div className="mt-6 rounded-card border border-closed/30 bg-closed/5 p-5 sm:p-6">
+            <h2 className="font-display text-[16px] font-bold text-ink">
+              No suggestions were produced
+            </h2>
+            <p className="mt-2 text-[15px] leading-[1.6] text-slate">
+              Reachly did not get an answer back for any of your bullets, so what you see below is
+              your resume exactly as you wrote it. This is not a judgement that it already matches
+              the posting — nothing was assessed. The usual cause is the model being rate limited or
+              briefly unavailable.
+            </p>
+            <button
+              type="button"
+              onClick={() => tailor.mutate()}
+              disabled={tailor.isPending}
+              className="mt-3 rounded-card border border-ink bg-ink px-4 py-2 text-[15px] font-medium text-paper hover:bg-ink/90 disabled:opacity-60"
+            >
+              {tailor.isPending ? "Trying again…" : "Try again"}
+            </button>
+          </div>
         )}
 
         {blocked && (

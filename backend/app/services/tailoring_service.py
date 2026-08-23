@@ -53,6 +53,16 @@ class BulletOutcome:
     rejected_detail: str = ""
     rejected_text: str = ""
 
+    # True when no rewrite was ever attempted for this bullet: no model configured, or the call
+    # failed. Distinct from `changed=False` with no rejection, which means the model looked at the
+    # sentence and had nothing better to offer.
+    #
+    # Without this the two are indistinguishable on screen, and they are opposite facts. A student
+    # whose model call hit a rate limit saw their own bullets with a box asking what to change, and
+    # concluded Reachly had read the posting and judged their resume already perfect. It had not run
+    # at all. Silence that looks like a verdict is worse than an error.
+    unavailable: bool = False
+
 
 @dataclass
 class TailoringResult:
@@ -70,6 +80,11 @@ class TailoringResult:
     @property
     def rejected_count(self) -> int:
         return sum(1 for o in self.outcomes if o.rejected_reason is not None)
+
+    @property
+    def unavailable_count(self) -> int:
+        """How many bullets were never put to a model. Non-zero means an outage, not a verdict."""
+        return sum(1 for o in self.outcomes if o.unavailable)
 
 
 def _bullets_of(resume: ParsedResume) -> list[tuple[str, str]]:
@@ -200,7 +215,9 @@ async def tailor_resume(
 
     if llm is None:
         result.outcomes = [
-            BulletOutcome(bullet_id=b_id, original=text, tailored=text, changed=False)
+            BulletOutcome(
+                bullet_id=b_id, original=text, tailored=text, changed=False, unavailable=True
+            )
             for b_id, text in bullets
         ]
         return result
@@ -215,7 +232,9 @@ async def tailor_resume(
         # An outage is not a tailoring. Every bullet falls back, and the interface says so.
         logger.warning("tailoring generation failed: %s", exc)
         result.outcomes = [
-            BulletOutcome(bullet_id=b_id, original=text, tailored=text, changed=False)
+            BulletOutcome(
+                bullet_id=b_id, original=text, tailored=text, changed=False, unavailable=True
+            )
             for b_id, text in bullets
         ]
         return result
@@ -295,9 +314,15 @@ async def tailor_resume(
                 )
             )
         else:
+            # The model answered the batch but said nothing about this bullet. Not a judgement on
+            # the sentence, so it is reported as unattempted rather than as a considered decline.
             result.outcomes.append(
                 BulletOutcome(
-                    bullet_id=bullet_id, original=original, tailored=original, changed=False
+                    bullet_id=bullet_id,
+                    original=original,
+                    tailored=original,
+                    changed=False,
+                    unavailable=True,
                 )
             )
 
@@ -348,7 +373,11 @@ async def revise_bullets(
     if llm is None or not requests:
         return [
             BulletOutcome(
-                bullet_id=r.bullet_id, original=r.original, tailored=r.original, changed=False
+                bullet_id=r.bullet_id,
+                original=r.original,
+                tailored=r.original,
+                changed=False,
+                unavailable=True,
             )
             for r in requests
         ]
@@ -439,12 +468,14 @@ async def revise_bullets(
                 )
             )
         else:
+            # Asked for and not answered: an outage or an omission, not a decision about the text.
             outcomes.append(
                 BulletOutcome(
                     bullet_id=bullet_id,
                     original=request.original,
                     tailored=request.original,
                     changed=False,
+                    unavailable=True,
                 )
             )
     return outcomes

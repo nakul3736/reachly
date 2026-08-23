@@ -37,6 +37,11 @@ class OutreachDraft:
     # message says what it says — the same argument the score report makes for the score.
     evidence: list[str] = field(default_factory=list)
 
+    # True when a model wrote it from the resume and posting and the result passed validation; False
+    # when this is the assembled fallback below. Surfaced to the student, because a template presented
+    # as a written email is a small lie that they will discover by reading it.
+    written: bool = False
+
 
 # How many skills to name. Three because a list of eight reads as a keyword dump and invites the
 # reader to check every one; three of the strongest reads as a person who understands the job.

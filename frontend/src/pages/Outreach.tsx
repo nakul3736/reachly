@@ -13,17 +13,24 @@
  * sentences.
  */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../lib/auth";
 import { fetchJob, queryKeys } from "../lib/jobs";
-import { fetchOutreach, mailtoLink, outreachKeys } from "../lib/outreach";
+import {
+  fetchOutreach,
+  mailtoLink,
+  outreachKeys,
+  rewriteOutreach,
+  type Outreach,
+} from "../lib/outreach";
 
 export function OutreachPage() {
   const { id } = useParams<{ id: string }>();
   const jobId = Number(id);
+  const cache = useQueryClient();
 
   const [recipient, setRecipient] = useState("");
   const [copied, setCopied] = useState<"none" | "body" | "subject">("none");
@@ -39,6 +46,14 @@ export function OutreachPage() {
     queryFn: () => fetchOutreach(jobId),
     retry: false,
     enabled: Number.isFinite(jobId),
+  });
+
+  const rewrite = useMutation({
+    mutationFn: () => rewriteOutreach(jobId),
+    // Written into the cache the page reads from, rather than held in mutation state. Ranking sources
+    // by which request ran last is the bug that made applied tailoring suggestions keep saying they
+    // were still waiting.
+    onSuccess: (next: Outreach) => cache.setQueryData(outreachKeys.outreach(jobId), next),
   });
 
   const copy = async (what: "body" | "subject", text: string) => {
@@ -148,6 +163,19 @@ export function OutreachPage() {
               >
                 Copy the whole thing
               </button>
+              {/*
+                Not "regenerate", which suggests the same output again. Generation is not
+                deterministic, so this genuinely writes a different email — which is the only useful
+                answer to "I don't like this one" until instruction-driven revision exists.
+              */}
+              <button
+                type="button"
+                onClick={() => rewrite.mutate()}
+                disabled={rewrite.isPending}
+                className="rounded-card border border-rule px-4 py-2 text-[15px] text-slate hover:border-ink hover:text-ink disabled:opacity-60"
+              >
+                {rewrite.isPending ? "Writing another…" : "Write me a different one"}
+              </button>
             </div>
             <p className="mt-2 font-receipt text-[11px] leading-[1.6] text-slate">
               Reachly never sends this. It opens in your own mail client, from your own address, and
@@ -160,6 +188,17 @@ export function OutreachPage() {
             <h2 className="font-display text-[15px] font-bold text-ink">
               Why it says what it says
             </h2>
+
+            {/*
+              Stated before the evidence, because the two drafts have different guarantees and a
+              template presented as writing is a lie the student finds by reading it.
+            */}
+            <p className="mt-2 font-receipt text-[11px] tracking-[0.02em] text-slate">
+              {draft.data.written
+                ? "written from your resume and this posting, then checked against your resume"
+                : "assembled from verified facts — no draft passed the check, so this is the plain version"}
+            </p>
+
             <ul className="mt-3 space-y-2">
               {draft.data.evidence.map((line) => (
                 <li key={line} className="text-[14px] leading-[1.6] text-slate">
@@ -167,10 +206,21 @@ export function OutreachPage() {
                 </li>
               ))}
             </ul>
+
+            {!draft.data.written && (
+              <p className="mt-3 text-[14px] leading-[1.6] text-slate">
+                This version is true and a little plain. Reachly writes a better one from your
+                bullets when it can — if the model was unreachable or its draft claimed something
+                your resume does not support, you get this instead rather than an unchecked email.
+                Trying again often works.
+              </p>
+            )}
+
             <p className="mt-3 text-[14px] leading-[1.6] text-slate">
-              There is no &quot;make it warmer&quot; button, on purpose. Every sentence here is
-              something Reachly can point at, and enthusiasm a tool invented for you is the part a
-              recruiter has read fifty times today. Add your own if you want it — it will be yours.
+              There is no &quot;make it warmer&quot; button, on purpose. Enthusiasm a tool invented
+              for you is the part a recruiter has read fifty times today, and a claim to have
+              admired a company you met ninety seconds ago is refused outright. Add your own warmth
+              if you want it — it will be yours.
             </p>
           </div>
         </>

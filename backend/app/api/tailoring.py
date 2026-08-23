@@ -54,6 +54,11 @@ class TailoredBullet(BaseModel):
     rejected_detail: str = ""
     rejected_text: str = ""
 
+    # True when no rewrite was attempted: no model available, the call failed, or the model omitted
+    # this bullet from its answer. Defaults False so tailorings stored before this field existed load
+    # as "considered", which is what they were.
+    unavailable: bool = False
+
 
 class DocumentBullet(BaseModel):
     """A bullet as it would appear on the page the student sends.
@@ -330,6 +335,7 @@ async def create_tailoring(
             "rejected_reason": o.rejected_reason.value if o.rejected_reason else None,
             "rejected_detail": o.rejected_detail,
             "rejected_text": o.rejected_text,
+            "unavailable": o.unavailable,
         }
         for o in result.outcomes
     ]
@@ -540,6 +546,7 @@ async def revise(
             ),
             "rejected_detail": outcome.rejected_detail,
             "rejected_text": outcome.rejected_text,
+            "unavailable": outcome.unavailable,
         }
         approved.discard(outcome.bullet_id)
 

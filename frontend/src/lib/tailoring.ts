@@ -22,6 +22,8 @@ export interface TailoredBullet {
   rejected_reason: string | null;
   rejected_detail: string;
   rejected_text: string;
+  /** No rewrite was attempted: no answer came back for this line. Not a verdict on the sentence. */
+  unavailable: boolean;
 }
 
 export interface DocumentBullet {

@@ -21,6 +21,7 @@ queries is a guess awaiting correction.
 from app.models.board_token import BoardToken
 from app.models.job import DedupVerdict, Job
 from app.models.match_score import MatchScore
+from app.models.outreach_draft import OutreachDraftRow
 from app.models.resume import ResumeMaster
 from app.models.student import Student
 from app.models.tailored_resume import TailoredResume
@@ -31,6 +32,7 @@ __all__ = [
     "DedupVerdict",
     "Job",
     "MatchScore",
+    "OutreachDraftRow",
     "ResumeMaster",
     "Student",
     "TailoredResume",
