@@ -55,6 +55,19 @@ class TailoredResume(Base):
     changed_count: Mapped[int] = mapped_column(Integer, default=0)
     rejected_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Which rewrites the student has personally approved, by bullet id.
+    #
+    # Empty is the meaningful default: a rewrite is a proposal, and until the student says otherwise
+    # the document is their own writing. The alternative — treating a generated rewrite as applied
+    # unless rejected — makes silence into consent for a sentence somebody is about to send an
+    # employer under their own name, which is precisely the thing ADR 0006 exists to prevent.
+    #
+    # Stored as ids rather than a flag inside `bullets` so that re-tailoring, which replaces the
+    # bullets payload wholesale, cannot quietly carry an old approval onto new text.
+    approved_bullet_ids: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default="[]"
+    )
+
     # recorded | live — which kind of client produced this. A student comparing two tailorings
     # deserves to know one came from a fixture.
     basis: Mapped[str] = mapped_column(String(16), default="live")

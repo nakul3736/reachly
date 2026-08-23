@@ -1,36 +1,141 @@
 /**
- * The tailored resume: every bullet with its original beside it.
+ * Tailoring: review every proposed change, push back on any of them, approve what you want to keep.
  *
- * This screen is the product's argument. Every other tool that offers to tailor a resume asks the
- * student to trust the output; this one shows the source of every sentence and, when a rewrite was
- * refused, shows what was refused and why.
+ * This screen is the product's argument. Other tools that offer to tailor a resume ask the student to
+ * trust the output. This one shows the source of every sentence, shows what was refused and why, and
+ * changes nothing until the student says so.
  *
- * The refusals are the point, so they are not hidden behind a disclosure. A student who sees "it
- * tried to add Kubernetes, which is not in this bullet" learns two things at once: that the
- * fabrication was attempted, and that something stopped it. Neither is available from a tool that
- * silently succeeds.
+ * Three decisions worth stating.
+ *
+ * **Nothing is applied by default.** A rewrite is a proposal. The resume on the right is the
+ * student's own writing until they tick a box, because silence is not consent for words somebody
+ * sends an employer under their own name.
+ *
+ * **Feedback is batched.** Comments on six bullets go in one request and cost one model call, so
+ * iterating on a whole resume costs what iterating on one bullet costs. On a free tier that is the
+ * difference between a loop a student can actually use and being rate-limited half way through.
+ *
+ * **The loop has no limit, and cannot drift.** Every revision is validated against the student's
+ * original sentence, never against the previous rewrite — so a claim cannot arrive by degrees over
+ * five rounds of "make it stronger", and the student can keep going until they are satisfied.
+ *
+ * The refusals are not hidden behind a disclosure. A student who reads "it tried to add Kubernetes,
+ * which is not in this bullet" learns two things at once: that the fabrication was attempted, and
+ * that something stopped it. Neither is available from a tool that silently succeeds.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { Fact, ReceiptLine } from "../components/Receipt";
+import { ResumeDocument } from "../components/ResumeDocument";
 import { ApiError } from "../lib/auth";
 import {
   asPlainText,
   createTailoring,
   fetchTailoring,
   refusalWording,
+  reviseBullets,
+  setApprovals,
   tailoringKeys,
   type TailoredBullet,
+  type TailoredResume,
 } from "../lib/tailoring";
+
+type View = "review" | "resume";
+
+function BulletRow({
+  bullet,
+  approved,
+  onToggle,
+  feedback,
+  onFeedback,
+}: {
+  bullet: TailoredBullet;
+  approved: boolean;
+  onToggle: (next: boolean) => void;
+  feedback: string;
+  onFeedback: (value: string) => void;
+}) {
+  const refused = Boolean(bullet.rejected_reason);
+  const offered = bullet.changed && !refused;
+
+  return (
+    <li className="border-t border-rule py-4 first:border-t-0 first:pt-0">
+      <p className="font-receipt text-[11px] tracking-[0.02em] text-slate">what you wrote</p>
+      <p className="mt-1 text-[14px] leading-[1.55] text-slate">{bullet.original}</p>
+
+      {offered && (
+        <>
+          <p className="mt-3 font-receipt text-[11px] tracking-[0.02em] text-slate">
+            what Reachly suggests
+          </p>
+          <p className="mt-1 text-[15px] leading-[1.55] text-ink">{bullet.tailored}</p>
+
+          <label className="mt-2 inline-flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={approved}
+              onChange={(event) => onToggle(event.target.checked)}
+              className="h-4 w-4 rounded border-rule accent-ink"
+            />
+            <span className="text-[14px] text-ink">
+              {approved ? "Using the suggestion" : "Use this suggestion"}
+            </span>
+          </label>
+        </>
+      )}
+
+      {refused && (
+        <div className="mt-3 rounded-card border border-closed/30 bg-closed/5 p-3">
+          <p className="font-receipt text-[11px] tracking-[0.02em] text-closed">rewrite refused</p>
+          <p className="mt-1 text-[14px] leading-[1.55] text-ink">
+            {refusalWording(bullet.rejected_reason ?? "", bullet.rejected_detail)} Your own sentence
+            is being kept.
+          </p>
+          {bullet.rejected_text && (
+            <details className="mt-2">
+              <summary className="cursor-pointer font-receipt text-[11px] tracking-[0.02em] text-slate">
+                what it wanted to write
+              </summary>
+              <p className="mt-1 text-[13px] leading-[1.55] text-slate">{bullet.rejected_text}</p>
+            </details>
+          )}
+        </div>
+      )}
+
+      {!offered && !refused && (
+        <p className="mt-2 font-receipt text-[11px] tracking-[0.02em] text-slate">
+          left as you wrote it
+        </p>
+      )}
+
+      <label className="mt-3 block">
+        <span className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+          tell Reachly what to change about this line
+        </span>
+        <textarea
+          value={feedback}
+          onChange={(event) => onFeedback(event.target.value)}
+          rows={2}
+          placeholder="lead with the database work / make it shorter / say less about the tooling"
+          className="mt-1 w-full rounded-card border border-rule bg-paper px-3 py-2 text-[14px] text-ink placeholder:text-slate/60 focus:border-ink focus:outline-none"
+        />
+      </label>
+    </li>
+  );
+}
 
 export function TailorPage() {
   const { id } = useParams<{ id: string }>();
   const jobId = Number(id);
   const queryClient = useQueryClient();
+
+  const [view, setView] = useState<View>("review");
   const [copied, setCopied] = useState(false);
+  const [feedback, setFeedback] = useState<Record<string, string>>({});
+  /** Ticked boxes, held locally so several can be changed before one request is sent. */
+  const [selection, setSelection] = useState<Set<string> | null>(null);
 
   const existing = useQuery({
     queryKey: tailoringKeys.tailoring(jobId),
@@ -40,227 +145,266 @@ export function TailorPage() {
     enabled: Number.isFinite(jobId),
   });
 
+  const store = (data: TailoredResume) => {
+    queryClient.setQueryData(tailoringKeys.tailoring(jobId), data);
+    setSelection(new Set(data.approved_bullet_ids));
+  };
+
   const tailor = useMutation({
     mutationFn: () => createTailoring(jobId),
-    onSuccess: (data) => queryClient.setQueryData(tailoringKeys.tailoring(jobId), data),
+    onSuccess: store,
   });
 
-  const result = tailor.data ?? existing.data;
-  const notFound = existing.isError && (existing.error as ApiError)?.status === 404;
+  const approve = useMutation({
+    mutationFn: (ids: string[]) => setApprovals(jobId, ids),
+    onSuccess: store,
+  });
 
-  const copy = async (text: string) => {
-    await navigator.clipboard.writeText(text);
+  const revise = useMutation({
+    mutationFn: (entries: { bullet_id: string; instruction: string }[]) =>
+      reviseBullets(jobId, entries),
+    onSuccess: (data) => {
+      store(data);
+      // The comments have been answered; leaving them in the boxes would invite sending them twice.
+      setFeedback({});
+    },
+  });
+
+  const result = revise.data ?? approve.data ?? tailor.data ?? existing.data;
+  const notFound = existing.isError && (existing.error as ApiError)?.status === 404;
+  const blocked = existing.isError && (existing.error as ApiError)?.status === 409;
+
+  const approvedIds = selection ?? new Set(result?.approved_bullet_ids ?? []);
+  const pendingFeedback = Object.entries(feedback)
+    .filter(([, instruction]) => instruction.trim().length > 0)
+    .map(([bullet_id, instruction]) => ({ bullet_id, instruction }));
+
+  const suggestions = (result?.bullets ?? []).filter((b) => b.changed && !b.rejected_reason);
+  const unsavedApprovals =
+    result != null &&
+    (approvedIds.size !== result.approved_bullet_ids.length ||
+      result.approved_bullet_ids.some((approvedId) => !approvedIds.has(approvedId)));
+
+  const toggle = (bulletId: string, next: boolean) => {
+    const current = new Set(approvedIds);
+    if (next) current.add(bulletId);
+    else current.delete(bulletId);
+    setSelection(current);
+  };
+
+  const copy = async () => {
+    if (!result) return;
+    await navigator.clipboard.writeText(asPlainText(result));
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <main className="mx-auto max-w-[1100px] px-4 py-8 sm:px-6">
-      <Link
-        to={`/jobs/${jobId}`}
-        className="font-receipt text-[11px] tracking-[0.02em] text-slate underline-offset-4 hover:underline"
-      >
-        &larr; back to the posting
-      </Link>
+      <div className="print:hidden">
+        <Link
+          to={`/jobs/${jobId}`}
+          className="font-receipt text-[11px] tracking-[0.02em] text-slate underline-offset-4 hover:underline"
+        >
+          &larr; back to the posting
+        </Link>
 
-      <h1 className="mt-3 font-display text-[24px] font-extrabold leading-tight tracking-[-0.02em] text-ink sm:text-[32px]">
-        Tailored resume
-      </h1>
+        <h1 className="mt-3 font-display text-[24px] font-extrabold leading-tight tracking-[-0.02em] text-ink sm:text-[32px]">
+          Tailored resume
+        </h1>
 
-      {result && (
-        <p className="mt-1 text-[15px] text-slate">
-          for <span className="font-medium text-ink">{result.job_title}</span> at{" "}
-          {result.company_name}
-        </p>
-      )}
-
-      {/* The claim, stated before the output rather than after it. */}
-      <section className="mt-6 rounded-card border border-rule bg-paper p-5 sm:p-6">
-        <h2 className="font-display text-[15px] font-bold text-ink">
-          What this does, and what it will not do
-        </h2>
-        <p className="mt-2 max-w-[68ch] text-[15px] text-slate">
-          Reachly rewrites your bullets using this posting&apos;s vocabulary. It cannot add a
-          technology, employer, number or claim that is not already in the bullet it is rewriting —
-          each rewrite is checked against its own source, and a rewrite that fails the check is
-          discarded in favour of your original sentence.
-        </p>
-        <p className="mt-2 max-w-[68ch] text-[15px] text-slate">
-          Requirements your resume does not support are listed as gaps below, never written into
-          your experience.
-        </p>
-
-        {!result && (
-          <button
-            type="button"
-            onClick={() => tailor.mutate()}
-            disabled={tailor.isPending}
-            className="mt-4 rounded-card border border-ink bg-ink px-4 py-2 text-[15px] font-medium text-paper hover:bg-ink/90 disabled:opacity-60"
-          >
-            {tailor.isPending ? "Tailoring…" : "Tailor my resume for this job"}
-          </button>
-        )}
-
-        {tailor.isError && (
-          <p className="mt-4 rounded-card border border-inferred/45 bg-inferred/5 p-3 text-[14px] text-ink">
-            {(tailor.error as ApiError)?.message ?? "That did not work."}
+        {result && (
+          <p className="mt-2 text-[15px] text-slate">
+            for <span className="font-medium text-ink">{result.job_title}</span> at{" "}
+            {result.company_name}
           </p>
         )}
 
-        {existing.isLoading && !notFound && (
-          <p className="mt-4 font-receipt text-[11px] text-slate">checking for an earlier version…</p>
+        {blocked && (
+          <div className="mt-6 rounded-card border border-rule bg-paper p-5">
+            <p className="text-[15px] text-ink">{(existing.error as ApiError).message}</p>
+            <Link
+              to="/profile"
+              className="mt-3 inline-block font-receipt text-[11px] tracking-[0.02em] text-slate underline underline-offset-2 hover:text-ink"
+            >
+              upload a resume
+            </Link>
+          </div>
         )}
-      </section>
 
-      {result && (
-        <>
-          <section className="mt-4 rounded-card border border-rule bg-paper p-5 sm:p-6">
-            <ReceiptLine>
-              {[
-                <Fact key="changed" tone="confirmed">
-                  {`${result.changed_count} rewritten`}
-                </Fact>,
-                <Fact
-                  key="rejected"
-                  tone={result.rejected_count > 0 ? "inferred" : "quiet"}
-                  title="Rewrites the validator refused because they added something not in your resume."
-                >
-                  {`${result.rejected_count} refused`}
-                </Fact>,
-                <Fact key="kept" tone="quiet">
-                  {`${result.bullets.length - result.changed_count} kept as written`}
-                </Fact>,
-                <Fact key="basis" tone={result.basis === "live" ? "quiet" : "inferred"}>
-                  {result.basis === "live" ? "model" : "recorded response"}
-                </Fact>,
-              ]}
-            </ReceiptLine>
+        {notFound && !result && (
+          <div className="mt-6 rounded-card border border-rule bg-paper p-5 sm:p-6">
+            <h2 className="font-display text-[16px] font-bold text-ink">
+              What this does, and what it will not do
+            </h2>
+            <p className="mt-2 text-[15px] leading-[1.6] text-slate">
+              Reachly rewrites your own bullets to use this posting&apos;s language. It cannot add a
+              skill, a number, a tool or an employer that is not already in your resume — every
+              rewrite is checked against the sentence it came from, and anything that introduces a
+              new claim is refused and shown to you. Nothing is applied until you approve it.
+            </p>
+            <button
+              type="button"
+              onClick={() => tailor.mutate()}
+              disabled={tailor.isPending}
+              className="mt-4 rounded-card border border-ink bg-ink px-4 py-2 text-[15px] font-medium text-paper hover:bg-ink/90 disabled:opacity-60"
+            >
+              {tailor.isPending ? "Rewriting…" : "Tailor my resume for this job"}
+            </button>
+          </div>
+        )}
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => copy(asPlainText(result))}
-                className="rounded-card border border-ink px-3 py-1.5 text-[14px] font-medium text-ink hover:bg-blueprint"
-              >
-                {copied ? "Copied" : "Copy tailored bullets"}
-              </button>
-              <button
-                type="button"
-                onClick={() => tailor.mutate()}
-                disabled={tailor.isPending}
-                className="rounded-card border border-rule px-3 py-1.5 text-[14px] text-slate hover:border-ink/25 disabled:opacity-60"
-              >
-                {tailor.isPending ? "Tailoring…" : "Tailor again"}
-              </button>
+        {result && (
+          <>
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-card border border-rule p-0.5">
+                {(["review", "resume"] as View[]).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setView(option)}
+                    className={`rounded-[10px] px-3 py-1.5 text-[14px] font-medium ${
+                      view === option ? "bg-ink text-paper" : "text-slate hover:text-ink"
+                    }`}
+                  >
+                    {option === "review"
+                      ? `Review changes (${suggestions.length})`
+                      : "Your resume"}
+                  </button>
+                ))}
+              </div>
+
+              <span className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+                {approvedIds.size} of {suggestions.length} suggestions in use
+                {result.rejected_count > 0 && ` · ${result.rejected_count} refused`}
+                {result.basis === "recorded" && " · recorded response"}
+              </span>
             </div>
-          </section>
 
-          <ol className="mt-4 flex flex-col gap-3">
-            {result.bullets.map((bullet) => (
-              <BulletRow key={bullet.bullet_id} bullet={bullet} />
-            ))}
-          </ol>
+            {view === "review" && (
+              <>
+                <ul className="mt-4 rounded-card border border-rule bg-paper p-5 sm:p-6">
+                  {result.bullets.map((bullet) => (
+                    <BulletRow
+                      key={bullet.bullet_id}
+                      bullet={bullet}
+                      approved={approvedIds.has(bullet.bullet_id)}
+                      onToggle={(next) => toggle(bullet.bullet_id, next)}
+                      feedback={feedback[bullet.bullet_id] ?? ""}
+                      onFeedback={(value) =>
+                        setFeedback((current) => ({ ...current, [bullet.bullet_id]: value }))
+                      }
+                    />
+                  ))}
+                </ul>
 
-          <GapList gaps={result.gaps} />
+                {result.gaps.length > 0 && (
+                  <div className="mt-4 rounded-card border border-rule bg-blueprint p-5">
+                    <h2 className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+                      Asked for, and not supported by your resume
+                    </h2>
+                    <p className="mt-2 flex flex-wrap gap-1.5">
+                      {result.gaps.map((gap) => (
+                        <span
+                          key={gap}
+                          className="rounded-chip border border-rule bg-paper px-1.5 py-0.5 font-receipt text-[11px] text-slate"
+                        >
+                          {gap}
+                        </span>
+                      ))}
+                    </p>
+                    <p className="mt-2 text-[14px] leading-[1.6] text-slate">
+                      These stay out of your resume. If you have one of them and left it off, add it
+                      to your master resume and tailor again — then it is your claim, made once,
+                      rather than a sentence a model wrote on your behalf.
+                    </p>
+                  </div>
+                )}
+
+                {/* The action bar. Both actions are explicit and batched: approvals in one request,
+                    all feedback in one model call. */}
+                <div className="sticky bottom-4 mt-4 flex flex-wrap items-center gap-2 rounded-card border border-ink/15 bg-paper/95 p-3 backdrop-blur">
+                  <button
+                    type="button"
+                    onClick={() => approve.mutate([...approvedIds])}
+                    disabled={approve.isPending || !unsavedApprovals}
+                    className="rounded-card border border-ink bg-ink px-4 py-2 text-[15px] font-medium text-paper hover:bg-ink/90 disabled:opacity-40"
+                  >
+                    {approve.isPending
+                      ? "Saving…"
+                      : unsavedApprovals
+                        ? `Apply ${approvedIds.size} to my resume`
+                        : "Approvals saved"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => revise.mutate(pendingFeedback)}
+                    disabled={revise.isPending || pendingFeedback.length === 0}
+                    className="rounded-card border border-ink px-4 py-2 text-[15px] font-medium text-ink hover:bg-blueprint disabled:opacity-40"
+                  >
+                    {revise.isPending
+                      ? "Rewriting…"
+                      : `Send feedback on ${pendingFeedback.length} ${
+                          pendingFeedback.length === 1 ? "line" : "lines"
+                        }`}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => tailor.mutate()}
+                    disabled={tailor.isPending}
+                    className="rounded-card border border-rule px-3 py-2 font-receipt text-[12px] text-slate hover:text-ink disabled:opacity-40"
+                  >
+                    start over
+                  </button>
+
+                  <span className="ml-auto font-receipt text-[11px] leading-[1.5] text-slate">
+                    {pendingFeedback.length > 1
+                      ? "all your comments go in one request"
+                      : "keep going until you are happy with it"}
+                  </span>
+                </div>
+
+                {revise.isError && (
+                  <p className="mt-2 text-[14px] text-closed">
+                    {(revise.error as ApiError)?.message ?? "That revision could not be made."}
+                  </p>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {result && view === "resume" && (
+        <>
+          <div className="mt-4 flex flex-wrap gap-2 print:hidden">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="rounded-card border border-ink bg-ink px-4 py-2 text-[15px] font-medium text-paper hover:bg-ink/90"
+            >
+              Save as PDF or print
+            </button>
+            <button
+              type="button"
+              onClick={copy}
+              className="rounded-card border border-ink px-4 py-2 text-[15px] font-medium text-ink hover:bg-blueprint"
+            >
+              {copied ? "Copied" : "Copy as text"}
+            </button>
+            <p className="w-full font-receipt text-[11px] leading-[1.6] text-slate">
+              This is your resume with the {approvedIds.size} suggestions you approved. Lines you
+              have not approved are still your own words — the notes beside them do not print.
+            </p>
+          </div>
+
+          <div className="mt-3 rounded-card border border-rule print:border-0">
+            <ResumeDocument document={result.document} />
+          </div>
         </>
       )}
     </main>
-  );
-}
-
-/**
- * One bullet, before and after.
- *
- * Three visually distinct states, because they mean three different things: rewritten and verified,
- * kept because nothing needed changing, and kept because a rewrite was caught adding something.
- */
-function BulletRow({ bullet }: { bullet: TailoredBullet }) {
-  const refused = bullet.rejected_reason !== null;
-
-  return (
-    <li className="rounded-card border border-rule bg-paper">
-      <div className="p-4 sm:p-5">
-        <p className="text-[15px] leading-relaxed text-ink">{bullet.tailored}</p>
-
-        {bullet.changed && (
-          <details className="mt-3">
-            <summary className="cursor-pointer font-receipt text-[11px] tracking-[0.02em] text-slate underline-offset-4 hover:underline">
-              what changed
-            </summary>
-            <p className="mt-2 border-l-2 border-rule pl-3 font-receipt text-[12px] leading-relaxed text-slate">
-              {bullet.original}
-            </p>
-          </details>
-        )}
-      </div>
-
-      <div className="border-t border-rule px-4 py-2.5 sm:px-5">
-        {refused ? (
-          <div>
-            <ReceiptLine>
-              {[
-                <Fact key="state" tone="inferred">
-                  rewrite refused — your sentence kept
-                </Fact>,
-              ]}
-            </ReceiptLine>
-            <p className="mt-1.5 text-[13px] leading-snug text-ink">
-              {refusalWording(bullet.rejected_reason ?? "", bullet.rejected_detail)}
-            </p>
-            {bullet.rejected_text && (
-              <details className="mt-1.5">
-                <summary className="cursor-pointer font-receipt text-[11px] text-slate underline-offset-4 hover:underline">
-                  what it wanted to write
-                </summary>
-                <p className="mt-1 border-l-2 border-inferred/40 pl-3 font-receipt text-[12px] leading-relaxed text-slate">
-                  {bullet.rejected_text}
-                </p>
-              </details>
-            )}
-          </div>
-        ) : (
-          <ReceiptLine>
-            {[
-              bullet.changed ? (
-                <Fact key="state" tone="confirmed">
-                  rewritten, every claim checked against your original
-                </Fact>
-              ) : (
-                <Fact key="state" tone="quiet">
-                  unchanged
-                </Fact>
-              ),
-            ]}
-          </ReceiptLine>
-        )}
-      </div>
-    </li>
-  );
-}
-
-/** Where unmet requirements go, so they never end up in the experience section. */
-function GapList({ gaps }: { gaps: string[] }) {
-  if (gaps.length === 0) return null;
-
-  return (
-    <section className="mt-4 rounded-card border border-rule bg-paper p-5 sm:p-6">
-      <h2 className="font-display text-[15px] font-bold text-ink">
-        Asked for, and not supported by your resume
-      </h2>
-      <p className="mt-2 max-w-[68ch] text-[15px] text-slate">
-        These stay here rather than being written into your experience. If you have used any of them
-        somewhere your resume does not mention, adding it there is the honest fix.
-      </p>
-      <ul className="mt-3 flex flex-wrap gap-1.5">
-        {gaps.map((gap) => (
-          <li
-            key={gap}
-            className="rounded-chip border border-rule bg-blueprint px-1.5 py-0.5 font-receipt text-[11px] text-slate"
-          >
-            {gap}
-          </li>
-        ))}
-      </ul>
-    </section>
   );
 }

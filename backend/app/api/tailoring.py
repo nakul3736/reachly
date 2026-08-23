@@ -24,7 +24,7 @@ from app.models.student import Student
 from app.models.tailored_resume import TailoredResume
 from app.services import job_service
 from app.services.scoring_service import get_student_profile, score_page
-from app.services.tailoring_service import tailor_resume
+from app.services.tailoring_service import RevisionRequest, revise_bullets, tailor_resume
 
 
 class ProfileMissing(DomainError):
@@ -56,16 +56,20 @@ class TailoredBullet(BaseModel):
 
 
 class DocumentBullet(BaseModel):
-    """A bullet as it should appear on the page.
+    """A bullet as it would appear on the page the student sends.
 
-    `text` is what the student would send: the rewrite where one was accepted, and their own
-    original wherever it was not. `refused` marks the second case, so the preview can be honest
-    about which lines a model tried and failed to improve without cluttering the page with the
-    attempt itself — that belongs on the comparison view.
+    `text` is their own sentence unless they approved a rewrite of it. That default is the feature:
+    a proposal is not a change, and nothing reaches this document because a model suggested it.
+
+    `pending` marks a rewrite that exists and has not been approved, so the preview can show the
+    student what their resume would become without pretending it already has. `refused` marks a
+    bullet where a rewrite was attempted and the validator rejected it — the attempt itself belongs
+    on the comparison view, not here.
     """
 
     text: str
-    changed: bool
+    applied: bool
+    pending: bool
     refused: bool
 
 
@@ -120,6 +124,9 @@ class TailoredResumeResponse(BaseModel):
 
     created_at: datetime
 
+    # Which rewrites the student has approved. Empty means the document below is their own writing.
+    approved_bullet_ids: list[str] = []
+
     # The printable version. Present so the student can see the result as a document rather than
     # as a list of sentences, and take it away without retyping it.
     document: TailoredDocument
@@ -165,7 +172,11 @@ def _assemble_document(
     student: Student,
     email: str,
 ) -> TailoredDocument:
-    """Put the accepted rewrites back into the resume's own structure.
+    """Put the approved rewrites back into the resume's own structure.
+
+    Approved, not merely generated. A bullet the student has not ticked keeps their own sentence, so
+    printing this before approving anything hands back their resume unchanged — the correct behaviour
+    for a tool proposing edits to something an employer will read.
 
     Every bullet the resume has appears exactly once, in its original position. A bullet with no
     outcome — which happens when tailoring skipped it, or when a stored tailoring predates an
@@ -173,6 +184,7 @@ def _assemble_document(
     from a document somebody is about to send an employer is the worst failure available here.
     """
     outcomes = {str(bullet.get("bullet_id")): bullet for bullet in (row.bullets or [])}
+    approved = set(row.approved_bullet_ids or [])
 
     experience: list[DocumentExperience] = []
     for entry in parsed.experience:
@@ -180,11 +192,15 @@ def _assemble_document(
         for bullet in entry.bullets:
             outcome = outcomes.get(bullet.id)
             refused = bool(outcome and outcome.get("rejected_reason"))
-            tailored = str(outcome.get("tailored") or "") if outcome else ""
+            rewrite = str(outcome.get("tailored") or "") if outcome else ""
+            offered = bool(outcome and outcome.get("changed")) and not refused
+            applied = offered and bullet.id in approved
+
             bullets.append(
                 DocumentBullet(
-                    text=tailored or bullet.text,
-                    changed=bool(outcome and outcome.get("changed")),
+                    text=rewrite if applied and rewrite else bullet.text,
+                    applied=applied,
+                    pending=offered and not applied,
                     refused=refused,
                 )
             )
@@ -236,6 +252,7 @@ def _to_response(
         rejected_count=row.rejected_count,
         basis=row.basis,
         created_at=row.created_at,
+        approved_bullet_ids=list(row.approved_bullet_ids or []),
         document=_assemble_document(parsed, row, student=student, email=email),
     )
 
@@ -373,6 +390,181 @@ async def get_tailoring(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No tailoring for this posting yet.",
         )
+
+    parsed = ParsedResume.model_validate(resume.parsed_json)
+    return _to_response(job, row, parsed=parsed, student=student, email=user.email)
+
+
+class ApprovalRequest(BaseModel):
+    """Which rewrites the student is willing to put their name to."""
+
+    approved: list[str]
+
+
+class BulletFeedback(BaseModel):
+    bullet_id: str
+    instruction: str
+
+
+class ReviseRequest(BaseModel):
+    """Feedback on several bullets at once, answered with one model call."""
+
+    revisions: list[BulletFeedback]
+
+
+@router.post("/{job_id}/tailor/revise", response_model=TailoredResumeResponse)
+async def revise(
+    job_id: int,
+    body: ReviseRequest,
+    user: CurrentUser,
+    session: SessionDep,
+) -> TailoredResumeResponse:
+    """Rewrite the bullets the student commented on, following their instructions, in one request.
+
+    Batched deliberately. One call for the whole set, and at most two including the retry, so a
+    student can iterate on six bullets for the same cost as one — which on a free tier is the
+    difference between working freely and being rate-limited half way through a resume.
+
+    An instruction can direct emphasis, length or ordering. It cannot authorise a fact: each result is
+    validated against that bullet's own original exactly as the first pass was, so asking for a number
+    the student's own sentence does not contain produces a refusal naming the number.
+
+    Revising clears the approval for the bullets it touches. The student approved a particular
+    sentence, and these are different ones.
+    """
+    feedback = [r for r in body.revisions if r.instruction.strip()]
+    if not feedback:
+        raise DomainError("Say what you would like changed, on at least one bullet.")
+
+    job = await job_service.get_job(session, job_id)
+    student = await _student_of(session, user.id)
+    resume = await _active_resume(session, student.id)
+    row = await _stored_tailoring(
+        session, student_id=student.id, job_id=job.id, resume_id=resume.id
+    )
+
+    bullets = list(row.bullets or [])
+    positions = {str(b.get("bullet_id")): i for i, b in enumerate(bullets)}
+
+    unknown = [r.bullet_id for r in feedback if r.bullet_id not in positions]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Not part of this tailoring: {', '.join(unknown)}",
+        )
+
+    requests = [
+        RevisionRequest(
+            bullet_id=r.bullet_id,
+            # Always the student's own sentence, never the last rewrite. See revise_bullets for why
+            # chaining revisions against each other would let a claim arrive by degrees.
+            original=str(bullets[positions[r.bullet_id]].get("original") or ""),
+            instruction=r.instruction,
+        )
+        for r in feedback
+    ]
+
+    try:
+        llm = get_llm_client()
+    except LLMError:
+        llm = None
+
+    outcomes = await revise_bullets(
+        requests,
+        job_title=job.title,
+        company=job.company_name,
+        description=job.description or "",
+        llm=llm,
+    )
+
+    approved = set(row.approved_bullet_ids or [])
+    for outcome in outcomes:
+        bullets[positions[outcome.bullet_id]] = {
+            "bullet_id": outcome.bullet_id,
+            "original": outcome.original,
+            "tailored": outcome.tailored,
+            "changed": outcome.changed,
+            "rejected_reason": (
+                outcome.rejected_reason.value if outcome.rejected_reason else None
+            ),
+            "rejected_detail": outcome.rejected_detail,
+            "rejected_text": outcome.rejected_text,
+        }
+        approved.discard(outcome.bullet_id)
+
+    row.bullets = bullets
+    row.changed_count = sum(1 for b in bullets if b.get("changed"))
+    row.rejected_count = sum(1 for b in bullets if b.get("rejected_reason"))
+    row.approved_bullet_ids = sorted(approved)
+
+    await session.commit()
+    await session.refresh(row)
+
+    parsed = ParsedResume.model_validate(resume.parsed_json)
+    return _to_response(job, row, parsed=parsed, student=student, email=user.email)
+
+
+async def _stored_tailoring(
+    session: AsyncSession, *, student_id: int, job_id: int, resume_id: int
+) -> TailoredResume:
+    row = (
+        (
+            await session.execute(
+                select(TailoredResume).where(
+                    TailoredResume.student_id == student_id,
+                    TailoredResume.job_id == job_id,
+                    TailoredResume.resume_master_id == resume_id,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No tailoring for this posting yet.",
+        )
+    return row
+
+
+@router.patch("/{job_id}/tailor/approvals", response_model=TailoredResumeResponse)
+async def set_approvals(
+    job_id: int,
+    body: ApprovalRequest,
+    user: CurrentUser,
+    session: SessionDep,
+) -> TailoredResumeResponse:
+    """Record which rewrites the student accepts. Only these reach the document.
+
+    The whole set is replaced rather than toggled one at a time, so the request describes the
+    student's current intent completely and two screens cannot disagree about what was approved.
+
+    Ids that do not belong to this tailoring are dropped rather than rejected with an error. The
+    honest reading of an unknown id is that the resume moved on — a re-upload, a re-tailoring — and
+    failing the request would leave a student unable to approve the seven bullets that are still
+    valid because an eighth is stale.
+    """
+    job = await job_service.get_job(session, job_id)
+    student = await _student_of(session, user.id)
+    resume = await _active_resume(session, student.id)
+    row = await _stored_tailoring(
+        session, student_id=student.id, job_id=job.id, resume_id=resume.id
+    )
+
+    known = {
+        str(bullet.get("bullet_id"))
+        for bullet in (row.bullets or [])
+        # A refused rewrite cannot be approved: there is nothing to approve, because the text on
+        # offer is already the student's own. Allowing it would put a tick beside a bullet that
+        # never changed and imply the guard had been overridden.
+        if not bullet.get("rejected_reason")
+    }
+    row.approved_bullet_ids = sorted(set(body.approved) & known)
+
+    await session.commit()
+    await session.refresh(row)
 
     parsed = ParsedResume.model_validate(resume.parsed_json)
     return _to_response(job, row, parsed=parsed, student=student, email=user.email)

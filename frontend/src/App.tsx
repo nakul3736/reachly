@@ -84,7 +84,7 @@ function Chrome({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      <header className="border-b border-rule bg-paper">
+      <header className="border-b border-rule bg-paper print:hidden">
         <div className="mx-auto flex w-full max-w-[1100px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <Link
             to="/"

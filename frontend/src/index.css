@@ -57,3 +57,29 @@
     }
   }
 }
+
+/* Printing is how a tailored resume leaves Reachly.
+
+   The browser's own print dialog produces a PDF, which avoids putting a PDF renderer, its font
+   stack and its failure modes on a free-tier server for a file the browser can already make. The
+   trade is that page breaks are the browser's decision.
+
+   Margins are set here rather than in the component so the printed page does not inherit the
+   screen layout's padding on top of the printer's own. */
+@media print {
+  @page {
+    margin: 16mm;
+  }
+
+  html,
+  body {
+    background: #fff;
+  }
+
+  /* Never split a role's bullets across two sheets if it can be avoided - a resume whose first
+     bullet is orphaned at the foot of page one reads as carelessness. */
+  li,
+  section {
+    break-inside: avoid;
+  }
+}

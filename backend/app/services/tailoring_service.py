@@ -93,6 +93,7 @@ def _prompt(
     company: str,
     description: str,
     rejected: dict[str, str] | None = None,
+    instructions: dict[str, str] | None = None,
 ) -> str:
     lines = [
         f"Posting: {job_title} at {company}",
@@ -104,6 +105,17 @@ def _prompt(
     ]
     for bullet_id, text in bullets:
         lines.append(f"- id {bullet_id}: {text}")
+        # The student's own direction for this bullet, attached to the bullet rather than stated
+        # once for the batch, so several bullets can carry different instructions in one request.
+        # Framed as subordinate to the source: asking for a number that is not in the sentence is
+        # asking for a fabrication, and the answer is a refusal from the validator rather than
+        # quiet compliance here.
+        if instructions and bullet_id in instructions:
+            lines.append(
+                f"  the student asks: {instructions[bullet_id].strip()[:400]} "
+                "(follow this only as far as the bullet above supports it; do not add a fact, "
+                "number, tool or employer in order to satisfy it)"
+            )
 
     if rejected:
         lines.append("")
@@ -125,6 +137,7 @@ async def _ask(
     company: str,
     description: str,
     rejected: dict[str, str] | None = None,
+    instructions: dict[str, str] | None = None,
 ) -> dict[str, str]:
     reply = await llm.complete_json(
         system=_SYSTEM,
@@ -134,6 +147,7 @@ async def _ask(
             company=company,
             description=description,
             rejected=rejected,
+            instructions=instructions,
         ),
         max_output_tokens=4096,
     )
@@ -209,7 +223,11 @@ async def tailor_resume(
         if verdict.ok:
             accepted[bullet_id] = candidate
         else:
-            rejected[bullet_id] = (verdict.reason or RejectionReason.EMPTY, verdict.detail, candidate)
+            rejected[bullet_id] = (
+                verdict.reason or RejectionReason.EMPTY,
+                verdict.detail,
+                candidate,
+            )
 
     # One retry, naming exactly what was added so the model has something to act on. A retry that
     # repeated the same prompt would mostly reproduce the same mistake.
@@ -275,3 +293,149 @@ async def tailor_resume(
             )
 
     return result
+
+
+@dataclass(frozen=True)
+class RevisionRequest:
+    """One bullet the student wants changed, and what they said about it."""
+
+    bullet_id: str
+    original: str
+    instruction: str
+
+
+async def revise_bullets(
+    requests: list[RevisionRequest],
+    *,
+    job_title: str,
+    company: str,
+    description: str,
+    llm: LLMClient | None = None,
+) -> list[BulletOutcome]:
+    """Rewrite several bullets again from the student's feedback, in one request.
+
+    One model call for the whole batch, and at most two — the same ceiling as the initial tailoring,
+    and the reason the shape is worth keeping. Revising bullet by bullet would spend a call per
+    comment, which on a free tier is the difference between a student iterating freely on six bullets
+    and being rate-limited halfway through.
+
+    Each instruction travels with its own bullet inside the single prompt, so six bullets can carry
+    six different instructions without six requests.
+
+    Validation is per bullet against **that bullet's own original**, never against the previous
+    rewrite. Chaining revisions would let a claim arrive by degrees: a first pass adds nothing, a
+    second adds a mild quantifier, a third sharpens it into a number, and each step passes because it
+    is only compared with the step before. Comparing against the student's own sentence every time
+    bounds the total drift however many revisions are asked for.
+
+    So "say I handled 10,000 records" is refused when 10,000 is not in the student's bullet, and the
+    refusal is returned rather than hidden. The student learns the number is the problem and can add
+    it to their master resume if it is true.
+    """
+    originals = {r.bullet_id: r.original for r in requests}
+    instructions = {r.bullet_id: r.instruction for r in requests}
+    pairs = [(r.bullet_id, r.original) for r in requests]
+
+    if llm is None or not requests:
+        return [
+            BulletOutcome(
+                bullet_id=r.bullet_id, original=r.original, tailored=r.original, changed=False
+            )
+            for r in requests
+        ]
+
+    try:
+        first = await _ask(
+            llm,
+            pairs,
+            job_title=job_title,
+            company=company,
+            description=description,
+            instructions=instructions,
+        )
+    except (LLMError, ValueError) as exc:
+        logger.warning("bullet revision failed: %s", exc)
+        first = {}
+
+    accepted: dict[str, str] = {}
+    rejected: dict[str, tuple[RejectionReason, str, str]] = {}
+
+    for bullet_id, candidate in first.items():
+        if bullet_id not in originals or candidate == originals[bullet_id]:
+            continue
+        verdict = validate_rewrite(originals[bullet_id], candidate)
+        if verdict.ok:
+            accepted[bullet_id] = candidate
+        else:
+            rejected[bullet_id] = (
+                verdict.reason or RejectionReason.EMPTY,
+                verdict.detail,
+                candidate,
+            )
+
+    # One retry for the refused ones only, naming what was added — ADR 0006's shape.
+    if rejected:
+        retry_pairs = [(bullet_id, originals[bullet_id]) for bullet_id in rejected]
+        try:
+            second = await _ask(
+                llm,
+                retry_pairs,
+                job_title=job_title,
+                company=company,
+                description=description,
+                instructions={k: instructions[k] for k in rejected if k in instructions},
+                rejected={k: detail for k, (_, detail, _) in rejected.items()},
+            )
+        except (LLMError, ValueError) as exc:
+            logger.warning("bullet revision retry failed: %s", exc)
+            second = {}
+
+        for bullet_id, candidate in second.items():
+            if bullet_id not in originals or candidate == originals[bullet_id]:
+                continue
+            verdict = validate_rewrite(originals[bullet_id], candidate)
+            if verdict.ok:
+                accepted[bullet_id] = candidate
+                rejected.pop(bullet_id, None)
+            else:
+                rejected[bullet_id] = (
+                    verdict.reason or RejectionReason.EMPTY,
+                    verdict.detail,
+                    candidate,
+                )
+
+    outcomes: list[BulletOutcome] = []
+    for request in requests:
+        bullet_id = request.bullet_id
+        if bullet_id in accepted:
+            outcomes.append(
+                BulletOutcome(
+                    bullet_id=bullet_id,
+                    original=request.original,
+                    tailored=accepted[bullet_id],
+                    changed=True,
+                )
+            )
+        elif bullet_id in rejected:
+            reason, detail, text = rejected[bullet_id]
+            outcomes.append(
+                BulletOutcome(
+                    bullet_id=bullet_id,
+                    original=request.original,
+                    tailored=request.original,
+                    changed=False,
+                    rejected_reason=reason,
+                    rejected_detail=detail,
+                    rejected_text=text,
+                )
+            )
+        else:
+            outcomes.append(
+                BulletOutcome(
+                    bullet_id=bullet_id,
+                    original=request.original,
+                    tailored=request.original,
+                    changed=False,
+                )
+            )
+    return outcomes

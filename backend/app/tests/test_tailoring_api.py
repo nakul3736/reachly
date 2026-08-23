@@ -206,6 +206,246 @@ class TestWritesSurviveTheRequest:
             assert stored.extracted_skills is not None, "the skills were read and discarded"
 
 
+class TestNothingChangesWithoutApproval:
+    """A rewrite is a proposal. The document is the student's own writing until they say otherwise.
+
+    This is the feature, not a safety net around it. Treating a generated sentence as applied unless
+    rejected would make silence into consent for words somebody sends an employer under their name.
+    """
+
+    async def _tailored_with_a_rewrite(
+        self, session: AsyncSession, student: Student, resume: ResumeMaster, job: Job
+    ) -> None:
+        """A stored tailoring with one accepted rewrite and one refusal, written directly.
+
+        Written rather than generated so the fixture's behaviour cannot change what is being tested.
+        """
+        session.add(
+            TailoredResume(
+                student_id=student.id,
+                job_id=job.id,
+                resume_master_id=resume.id,
+                bullets=[
+                    {
+                        "bullet_id": "b1",
+                        "original": "Wrote Python scripts to clean survey data.",
+                        "tailored": "Wrote Python scripts to clean and validate survey data.",
+                        "changed": True,
+                        "rejected_reason": None,
+                        "rejected_detail": "",
+                        "rejected_text": "",
+                    },
+                    {
+                        "bullet_id": "b2",
+                        "original": "Built a small SQL database for the results.",
+                        "tailored": "Built a small SQL database for the results.",
+                        "changed": False,
+                        "rejected_reason": "added_technology",
+                        "rejected_detail": "Kubernetes",
+                        "rejected_text": "Built a SQL database on Kubernetes for the results.",
+                    },
+                ],
+                gaps=["Kubernetes"],
+                changed_count=1,
+                rejected_count=1,
+                basis="recorded",
+            )
+        )
+        await session.commit()
+
+    async def test_the_document_keeps_the_original_until_approved(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        student, resume, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.flush()
+        await self._tailored_with_a_rewrite(session, student, resume, job)
+
+        response = await client.get(
+            f"/api/v1/jobs/{job.id}/tailor", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        body = response.json()
+        assert body["approved_bullet_ids"] == []
+        first = body["document"]["experience"][0]["bullets"][0]
+        assert first["text"] == "Wrote Python scripts to clean survey data."
+        assert first["applied"] is False
+        assert first["pending"] is True, "the student should be told a rewrite is waiting"
+
+    async def test_approving_puts_the_rewrite_into_the_document(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        student, resume, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.flush()
+        await self._tailored_with_a_rewrite(session, student, resume, job)
+
+        headers = {"Authorization": f"Bearer {token}"}
+        response = await client.patch(
+            f"/api/v1/jobs/{job.id}/tailor/approvals",
+            headers=headers,
+            json={"approved": ["b1"]},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["approved_bullet_ids"] == ["b1"]
+        first = body["document"]["experience"][0]["bullets"][0]
+        assert first["text"] == "Wrote Python scripts to clean and validate survey data."
+        assert first["applied"] is True
+        assert first["pending"] is False
+
+    async def test_withdrawing_approval_restores_the_original(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        student, resume, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.flush()
+        await self._tailored_with_a_rewrite(session, student, resume, job)
+
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.patch(
+            f"/api/v1/jobs/{job.id}/tailor/approvals", headers=headers, json={"approved": ["b1"]}
+        )
+        response = await client.patch(
+            f"/api/v1/jobs/{job.id}/tailor/approvals", headers=headers, json={"approved": []}
+        )
+
+        body = response.json()
+        assert body["approved_bullet_ids"] == []
+        assert (
+            body["document"]["experience"][0]["bullets"][0]["text"]
+            == "Wrote Python scripts to clean survey data."
+        )
+
+    async def test_a_refused_rewrite_cannot_be_approved(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """There is nothing to approve, and a tick beside it would imply the guard was overridden."""
+        student, resume, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.flush()
+        await self._tailored_with_a_rewrite(session, student, resume, job)
+
+        response = await client.patch(
+            f"/api/v1/jobs/{job.id}/tailor/approvals",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"approved": ["b1", "b2"]},
+        )
+
+        body = response.json()
+        assert body["approved_bullet_ids"] == ["b1"], "b2's rewrite was refused"
+        second = body["document"]["experience"][0]["bullets"][1]
+        assert "Kubernetes" not in second["text"]
+
+    async def test_an_unknown_id_is_dropped_rather_than_failing_the_request(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """A stale id means the resume moved on, not that the other approvals are invalid."""
+        student, resume, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.flush()
+        await self._tailored_with_a_rewrite(session, student, resume, job)
+
+        response = await client.patch(
+            f"/api/v1/jobs/{job.id}/tailor/approvals",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"approved": ["b1", "b-from-an-older-resume"]},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["approved_bullet_ids"] == ["b1"]
+
+
+class TestRevisionFromFeedback:
+    async def test_feedback_on_several_bullets_is_one_request(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """Batched so iterating on a whole resume costs what one bullet costs."""
+        _, _, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.post(f"/api/v1/jobs/{job.id}/tailor", headers=headers)
+
+        response = await client.post(
+            f"/api/v1/jobs/{job.id}/tailor/revise",
+            headers=headers,
+            json={
+                "revisions": [
+                    {"bullet_id": "b1", "instruction": "lead with the data cleaning"},
+                    {"bullet_id": "b3", "instruction": "make it shorter"},
+                ]
+            },
+        )
+
+        assert response.status_code == 200
+        # Whatever the model returned, every bullet still exists and none carries invented text.
+        body = response.json()
+        assert len(body["bullets"]) == 3
+        for bullet in body["bullets"]:
+            assert bullet["original"], "the source sentence must survive a revision"
+
+    async def test_revising_clears_the_approval_for_that_bullet(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """The student approved a particular sentence, and a revision is a different one."""
+        _, _, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.post(f"/api/v1/jobs/{job.id}/tailor", headers=headers)
+        await client.patch(
+            f"/api/v1/jobs/{job.id}/tailor/approvals", headers=headers, json={"approved": ["b1"]}
+        )
+
+        response = await client.post(
+            f"/api/v1/jobs/{job.id}/tailor/revise",
+            headers=headers,
+            json={"revisions": [{"bullet_id": "b1", "instruction": "shorter"}]},
+        )
+
+        assert "b1" not in response.json()["approved_bullet_ids"]
+
+    async def test_empty_feedback_is_refused(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        _, _, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.post(f"/api/v1/jobs/{job.id}/tailor", headers=headers)
+
+        response = await client.post(
+            f"/api/v1/jobs/{job.id}/tailor/revise",
+            headers=headers,
+            json={"revisions": [{"bullet_id": "b1", "instruction": "   "}]},
+        )
+
+        assert response.status_code == 400
+
+    async def test_feedback_on_a_bullet_that_is_not_there_is_a_404(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        _, _, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.post(f"/api/v1/jobs/{job.id}/tailor", headers=headers)
+
+        response = await client.post(
+            f"/api/v1/jobs/{job.id}/tailor/revise",
+            headers=headers,
+            json={"revisions": [{"bullet_id": "not-a-bullet", "instruction": "shorter"}]},
+        )
+
+        assert response.status_code == 404
+
+
 class TestTailoringEndpoint:
     async def test_it_stores_one_row_and_replaces_it_on_retailoring(
         self, client: AsyncClient, session: AsyncSession

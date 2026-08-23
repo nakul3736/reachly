@@ -5,6 +5,11 @@
  * shown, and a refused rewrite carries what was refused and why. The interface's claim is "nothing
  * was invented, and here is the evidence" — a response that only returned final text could not
  * support it.
+ *
+ * The response also carries the assembled document, which is what the student prints. It is built on
+ * the server so the browser never has to stitch bullets back into a resume it fetched separately —
+ * two payloads that can disagree about which bullet belongs to which job, with a student sending an
+ * employer a line filed under the wrong employer.
  */
 import { api } from "./auth";
 
@@ -19,6 +24,39 @@ export interface TailoredBullet {
   rejected_text: string;
 }
 
+export interface DocumentBullet {
+  text: string;
+  /** The student approved a rewrite and it is in the text above. */
+  applied: boolean;
+  /** A rewrite exists and has not been approved, so the text above is still the original. */
+  pending: boolean;
+  /** A rewrite was attempted and the validator refused it. */
+  refused: boolean;
+}
+
+export interface DocumentExperience {
+  employer: string;
+  title: string;
+  dates: string;
+  bullets: DocumentBullet[];
+}
+
+export interface DocumentEducation {
+  institution: string;
+  credential: string;
+  dates: string;
+}
+
+export interface TailoredDocument {
+  name: string;
+  email: string;
+  links: Record<string, string>;
+  summary: string;
+  skills: string[];
+  experience: DocumentExperience[];
+  education: DocumentEducation[];
+}
+
 export interface TailoredResume {
   job_id: number;
   job_title: string;
@@ -31,6 +69,14 @@ export interface TailoredResume {
   /** recorded | live — a fixture is a weaker claim than a model, and it is never presented as one. */
   basis: string;
   created_at: string;
+  /** Empty means the document below is entirely the student's own writing. */
+  approved_bullet_ids: string[];
+  document: TailoredDocument;
+}
+
+export interface BulletFeedback {
+  bullet_id: string;
+  instruction: string;
 }
 
 export const createTailoring = (jobId: number) =>
@@ -38,6 +84,20 @@ export const createTailoring = (jobId: number) =>
 
 export const fetchTailoring = (jobId: number) =>
   api.get<TailoredResume>(`/api/v1/jobs/${jobId}/tailor`);
+
+/** Replace the set of approved rewrites. The whole set, so two screens cannot disagree. */
+export const setApprovals = (jobId: number, approved: string[]) =>
+  api.patch<TailoredResume>(`/api/v1/jobs/${jobId}/tailor/approvals`, { approved });
+
+/**
+ * Send feedback on several bullets at once.
+ *
+ * One request, answered with one model call, so revising six bullets costs what revising one costs.
+ * The instructions cannot authorise a new fact — each result is validated against that bullet's own
+ * original, and a refusal comes back naming what it tried to add.
+ */
+export const reviseBullets = (jobId: number, revisions: BulletFeedback[]) =>
+  api.post<TailoredResume>(`/api/v1/jobs/${jobId}/tailor/revise`, { revisions });
 
 /** Why a rewrite was refused, in the interface's voice rather than the enum's. */
 export function refusalWording(reason: string, detail: string): string {
@@ -57,12 +117,40 @@ export function refusalWording(reason: string, detail: string): string {
   }
 }
 
-/** The whole tailored resume as plain text, for the copy button. */
+/**
+ * The document as plain text, for pasting into an application form.
+ *
+ * Built from the document rather than from the bullets, so it contains exactly what the student
+ * approved — the same words the printed page shows. A copy button that emitted every proposed rewrite
+ * regardless of approval would hand over text the student had declined.
+ */
 export function asPlainText(tailored: TailoredResume): string {
-  const lines = tailored.bullets.map((b) => `• ${b.tailored}`);
-  if (tailored.gaps.length > 0) {
-    lines.push("", "Not supported by this resume:", ...tailored.gaps.map((g) => `- ${g}`));
+  const doc = tailored.document;
+  const lines: string[] = [];
+
+  if (doc.name) lines.push(doc.name);
+  if (doc.email) lines.push(doc.email);
+  if (doc.summary) lines.push("", doc.summary);
+
+  if (doc.experience.length > 0) {
+    lines.push("", "EXPERIENCE");
+    for (const entry of doc.experience) {
+      lines.push("", `${entry.title}, ${entry.employer}${entry.dates ? ` (${entry.dates})` : ""}`);
+      for (const bullet of entry.bullets) lines.push(`• ${bullet.text}`);
+    }
   }
+
+  if (doc.education.length > 0) {
+    lines.push("", "EDUCATION");
+    for (const entry of doc.education) {
+      lines.push(
+        `${entry.credential}${entry.credential && entry.institution ? ", " : ""}${entry.institution}${entry.dates ? ` (${entry.dates})` : ""}`,
+      );
+    }
+  }
+
+  if (doc.skills.length > 0) lines.push("", "SKILLS", doc.skills.join(", "));
+
   return lines.join("\n");
 }
 
