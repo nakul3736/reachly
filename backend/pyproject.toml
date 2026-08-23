@@ -78,6 +78,16 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "app/tests/*" = ["S105", "S106"]  # hardcoded test credentials are intentional
 
+# The formatter wraps code at 96 and leaves comments and docstrings alone, by design — it will not
+# reflow prose. With E501 also set at 96, every explanatory comment became a manual wrapping
+# exercise that produced no improvement in the code and consumed real time.
+#
+# So the two limits are separated, which is what this setting exists for: code is still formatted
+# to 96, and E501 only objects past 110. Prose stays readable, the formatter stays authoritative
+# for anything it can actually fix, and a genuinely runaway line is still caught.
+[tool.ruff.lint.pycodestyle]
+max-line-length = 110
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["app/tests"]

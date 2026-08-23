@@ -32,10 +32,11 @@ class RecordingLLM:
         self, *, system: str, user: str, max_output_tokens: int = 2048
     ) -> dict[str, object]:
         self.calls.append(user)
-        if isinstance(self._replies, list):
-            reply = self._replies[len(self.calls) - 1]
-        else:
-            reply = self._replies
+        reply = (
+            self._replies[len(self.calls) - 1]
+            if isinstance(self._replies, list)
+            else self._replies
+        )
         return {"postings": [{"id": k, "skills": v} for k, v in reply.items()]}
 
 
