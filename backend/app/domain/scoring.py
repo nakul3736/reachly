@@ -103,7 +103,17 @@ class MatchBreakdown:
     is_complete: bool = True
 
 
-_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+#.]{1,}")
+# Three characters minimum, not two. Raised after the score report page put the overlap on screen
+# and it read `to · in · of · by · an`: those words rank at the top because a job description
+# repeats them constantly, so the saturating term frequency scores them highly, and they are
+# evidence of nothing. The stop list stays short on purpose — a long one starts encoding opinions
+# about which words matter, and the weights already decide that — so the fix is a length floor
+# rather than fifty more entries.
+#
+# The cost is two-letter technology names, and it is not paid here: `Go`, `C` and `R` are matched by
+# the skills component, which knows they are skills. This component is about vocabulary overlap,
+# where a two-letter token is noise far more often than signal.
+_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+#.]{2,}")
 
 # Words too common to carry similarity. Kept short deliberately: a long stop list starts encoding
 # opinions about which words matter, and the weights already decide that.
