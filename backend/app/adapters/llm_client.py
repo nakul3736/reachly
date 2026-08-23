@@ -60,10 +60,19 @@ class LLMClient(Protocol):
 def get_llm_client() -> LLMClient:
     """The client for the current configuration.
 
-    `DEMO_MODE` selects recorded responses. A missing API key outside demo mode is a
-    configuration error rather than a reason to silently degrade — degrading quietly
-    would mean a deployment that appears to work while every tailoring request returns
-    a fixture, which is precisely the deception ADR 0006 exists to prevent.
+    `DEMO_MODE` selects recorded responses, and it wins over a configured key. That ordering is
+    deliberate and was briefly reversed by mistake: preferring the key meant the test suite began
+    constructing a real client and reaching the network, breaking the invariant that tests never
+    call an external API.
+
+    The consequence for deployment is a configuration decision rather than a code one. A
+    deployment that has a key should run with `DEMO_MODE=false` so real resumes parse properly; a
+    deployment without one runs in demo mode and serves recorded responses. Inferring that from the
+    presence of a key would take the choice away from whoever configured the environment.
+
+    A missing key outside demo mode stays a hard error rather than a silent degrade. A deployment
+    that appears to work while every request returns a fixture is exactly the deception ADR 0006
+    exists to prevent.
     """
     from app.adapters.fixture_llm_client import FixtureLLMClient
     from app.adapters.gemini_client import GeminiClient
