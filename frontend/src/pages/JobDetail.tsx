@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import { Fact, ReceiptLine, VerificationChip } from "../components/Receipt";
+import { ScoreBar } from "../components/ScoreBar";
 import { fetchJob, queryKeys } from "../lib/jobs";
 import { isStale, postedAge } from "../lib/time";
 
@@ -105,6 +106,82 @@ export default function JobDetailPage() {
               filled or withdrawn. It stays here because your application history should not
               develop holes.
             </p>
+          )}
+
+          {job.data.score && (
+            <section className="mt-6 rounded-card border border-rule bg-paper p-5 sm:p-6">
+              <h2 className="font-display text-[15px] font-bold text-ink">
+                Why this scored {job.data.score.total}
+              </h2>
+
+              <div className="mt-3">
+                <ScoreBar score={job.data.score} />
+              </div>
+
+              {/* The score's receipt. Machine voice, because this is evidence rather than
+                  prose: the exact terms the posting asked for, and the sentence the
+                  experience requirement was read from. */}
+              <dl className="mt-5 space-y-3 border-t border-rule pt-4">
+                {job.data.score.matched_skills.length > 0 && (
+                  <div>
+                    <dt className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+                      skills you have that it asked for
+                    </dt>
+                    <dd className="mt-1 flex flex-wrap gap-1.5">
+                      {job.data.score.matched_skills.map((skill) => (
+                        <span
+                          key={skill}
+                          className="rounded-chip border border-confirmed/40 bg-confirmed/5 px-1.5 py-0.5 font-receipt text-[11px] text-confirmed"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </dd>
+                  </div>
+                )}
+
+                {job.data.score.missing_skills.length > 0 && (
+                  <div>
+                    <dt className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+                      asked for, not on your resume
+                    </dt>
+                    <dd className="mt-1 flex flex-wrap gap-1.5">
+                      {job.data.score.missing_skills.map((skill) => (
+                        <span
+                          key={skill}
+                          className="rounded-chip border border-rule bg-blueprint px-1.5 py-0.5 font-receipt text-[11px] text-slate"
+                        >
+                          {skill}
+                        </span>
+                      ))}
+                    </dd>
+                  </div>
+                )}
+
+                <div>
+                  <dt className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+                    experience
+                  </dt>
+                  <dd className="mt-1 text-[14px] text-ink">
+                    {job.data.score.requirement_phrase ? (
+                      <>
+                        {job.data.score.requirement_basis === "preferred"
+                          ? "Stated as a preference, not a bar: "
+                          : "Read from the posting: "}
+                        <q className="font-receipt text-[12px] text-slate">
+                          {job.data.score.requirement_phrase}
+                        </q>
+                      </>
+                    ) : (
+                      <span className="text-inferred">
+                        This posting does not state an experience requirement. Reachly has not
+                        assumed one either way.
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            </section>
           )}
 
           <div className="mt-4 flex flex-wrap gap-2">

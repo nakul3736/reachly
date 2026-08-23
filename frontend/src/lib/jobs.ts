@@ -6,6 +6,32 @@
  * product's position is that it never presents a guess as a fact.
  */
 import { apiUrl } from "./api";
+import { storedToken } from "./auth";
+
+export type ComponentState = "scored" | "met" | "short" | "unstated";
+
+/**
+ * The score, decomposed. Never rendered as a bare total — ADR 0003 and the design brief both
+ * require the four parts to be visible, because a single opaque number is exactly what the
+ * student already gets from every job board that ignores them.
+ */
+export interface ScoreBreakdown {
+  total: number;
+  skill_points: number;
+  experience_points: number;
+  keyword_points: number;
+  freshness_points: number;
+  skill_state: ComponentState;
+  experience_state: ComponentState;
+  keyword_state: ComponentState;
+  freshness_state: ComponentState;
+  matched_skills: string[];
+  missing_skills: string[];
+  required_years: number | null;
+  requirement_basis: string | null;
+  /** The words the requirement was read from, so the number can be checked against its source. */
+  requirement_phrase: string | null;
+}
 
 export interface JobSummary {
   id: number;
@@ -21,6 +47,8 @@ export interface JobSummary {
   first_seen_at: string;
   closed_at: string | null;
   is_verified: boolean;
+  /** Absent for an anonymous request or a student with no parsed resume. */
+  score: ScoreBreakdown | null;
 }
 
 export interface JobAlias {
@@ -41,6 +69,10 @@ export interface JobFeed {
   total: number;
   page: number;
   page_size: number;
+  /** False for an anonymous request or a student with no parsed resume. */
+  scored: boolean;
+  /** How many postings the ranking covered, when that is fewer than the total. */
+  ranked_within: number | null;
 }
 
 export interface BoardStatus {
@@ -55,8 +87,15 @@ export interface BoardStatus {
 }
 
 async function getJson<T>(path: string): Promise<T> {
+  // The token is sent when present, and its absence is not an error. The index is public: an
+  // anonymous request gets the feed unscored, a signed-in one gets scores added. Making this a
+  // hard requirement would mean browsing the index required an account.
+  const token = storedToken();
   const response = await fetch(apiUrl(path), {
-    headers: { Accept: "application/json" },
+    headers: {
+      Accept: "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
 
   if (!response.ok) {

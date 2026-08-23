@@ -11,15 +11,19 @@
 import { Link } from "react-router-dom";
 
 import { Fact, ReceiptLine, VerificationChip } from "./Receipt";
+import { ScoreAbsent, ScoreBar } from "./ScoreBar";
 import type { JobSummary } from "../lib/jobs";
 import { isStale, postedAge, readAge } from "../lib/time";
 
 export function JobCard({
   job,
   boardReadAt,
+  scoreAbsentReason,
 }: {
   job: JobSummary;
   boardReadAt: string | null;
+  /** Why there is no score, when there is none. Absent means say nothing. */
+  scoreAbsentReason?: "anonymous" | "no-resume" | null;
 }) {
   const closed = job.closed_at !== null;
 
@@ -53,13 +57,20 @@ export function JobCard({
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:items-end">
+        <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
           {closed ? (
             <span className="inline-flex items-center rounded-chip border border-closed/40 bg-closed/5 px-1.5 py-0.5 font-receipt text-[11px] tracking-[0.02em] text-closed">
               closed
             </span>
           ) : (
             <VerificationChip verified={job.is_verified} />
+          )}
+
+          {/* The decomposed score joins this column, as the card's original note anticipated. */}
+          {job.score ? (
+            <ScoreBar score={job.score} compact />
+          ) : (
+            scoreAbsentReason && <ScoreAbsent reason={scoreAbsentReason} />
           )}
         </div>
       </div>

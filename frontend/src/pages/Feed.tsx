@@ -16,6 +16,7 @@ import {
 } from "../components/FilterBar";
 import { IndexLedger } from "../components/IndexLedger";
 import { JobCard, JobCardSkeleton } from "../components/JobCard";
+import { storedToken } from "../lib/auth";
 import { fetchJobs, fetchSources } from "../lib/jobs";
 
 const PAGE_SIZE = 20;
@@ -109,12 +110,28 @@ export default function Feed() {
 
         {jobs.isSuccess && jobs.data.items.length > 0 && (
           <>
+            {/* Say what the ordering is, rather than letting the student infer it. When scored,
+                the feed is ranked by match; when not, by recency — and those are different
+                promises. */}
+            <p className="mb-3 font-receipt text-[11px] tracking-[0.02em] text-slate">
+              {jobs.data.scored
+                ? `ordered by match${
+                    jobs.data.ranked_within && jobs.data.ranked_within < jobs.data.total
+                      ? ` across the ${jobs.data.ranked_within} most recent of ${jobs.data.total}`
+                      : ""
+                  }`
+                : "ordered by when the posting was first seen"}
+            </p>
+
             <div className="flex flex-col gap-3">
               {jobs.data.items.map((job) => (
                 <JobCard
                   key={job.id}
                   job={job}
                   boardReadAt={readByProvider.get(job.source) ?? null}
+                  scoreAbsentReason={
+                    jobs.data.scored ? null : storedToken() ? "no-resume" : "anonymous"
+                  }
                 />
               ))}
             </div>
