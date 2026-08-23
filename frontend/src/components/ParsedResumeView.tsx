@@ -12,7 +12,11 @@ import { Fact, ReceiptLine } from "./Receipt";
 import type { ParsedResume } from "../lib/student";
 
 export function ParsedResumeView({ parsed }: { parsed: ParsedResume }) {
-  const bulletCount = parsed.experience.reduce((n, role) => n + role.bullets.length, 0);
+  // Projects may be absent entirely: every resume parsed before Reachly read them has no such key.
+  const projects = parsed.projects ?? [];
+  const experienceBullets = parsed.experience.reduce((n, role) => n + role.bullets.length, 0);
+  const projectBullets = projects.reduce((n, project) => n + project.bullets.length, 0);
+  const bulletCount = experienceBullets + projectBullets;
 
   return (
     <div className="flex flex-col gap-4">
@@ -21,6 +25,9 @@ export function ParsedResumeView({ parsed }: { parsed: ParsedResume }) {
           {[
             <Fact key="roles" tone="confirmed">
               {`${parsed.experience.length} ${parsed.experience.length === 1 ? "role" : "roles"}`}
+            </Fact>,
+            <Fact key="projects" tone={projects.length > 0 ? "confirmed" : undefined}>
+              {`${projects.length} ${projects.length === 1 ? "project" : "projects"}`}
             </Fact>,
             <Fact key="bullets">{`${bulletCount} bullets`}</Fact>,
             <Fact key="skills">{`${parsed.skills.length} skills`}</Fact>,
@@ -63,6 +70,47 @@ export function ParsedResumeView({ parsed }: { parsed: ParsedResume }) {
                 {role.bullets.length > 0 && (
                   <ul className="mt-3 flex flex-col gap-3">
                     {role.bullets.map((bullet) => (
+                      <li key={bullet.id} className="border-l-2 border-rule pl-3">
+                        <p className="text-[15px] leading-[1.6] text-ink">{bullet.text}</p>
+                        <span
+                          className="mt-1 inline-block font-receipt text-[11px] tracking-[0.02em] text-closed"
+                          title="Derived from this bullet's own text. Tailored versions resolve back to this identifier, so a rewrite can always be traced to the line it came from."
+                        >
+                          {bullet.id}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ol>
+        </Section>
+      )}
+
+      {(parsed.projects ?? []).length > 0 && (
+        <Section title="Projects">
+          {/*
+            Its own section, never folded into experience. Nobody employed the student to build
+            these, and filing one under an employer would put a company on the resume that does not
+            exist. For most graduates this is the strongest material in the document, so the bullets
+            carry the same traceable ids as paid work and are tailored on the same terms.
+          */}
+          <ol className="flex flex-col gap-5">
+            {parsed.projects.map((project) => (
+              <li key={project.id}>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <h4 className="font-display text-[18px] font-bold tracking-[-0.01em] text-ink">
+                    {project.name}
+                  </h4>
+                  <span className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+                    {project.dates || "no dates given"}
+                  </span>
+                </div>
+
+                {project.bullets.length > 0 && (
+                  <ul className="mt-3 flex flex-col gap-3">
+                    {project.bullets.map((bullet) => (
                       <li key={bullet.id} className="border-l-2 border-rule pl-3">
                         <p className="text-[15px] leading-[1.6] text-ink">{bullet.text}</p>
                         <span

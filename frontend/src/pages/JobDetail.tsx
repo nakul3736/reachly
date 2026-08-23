@@ -212,6 +212,12 @@ export default function JobDetailPage() {
             >
               Tailor my resume for this job
             </Link>
+            <Link
+              to={`/jobs/${job.data.id}/outreach`}
+              className="rounded-card border border-ink px-4 py-2 text-[15px] font-medium text-ink hover:bg-blueprint"
+            >
+              Draft an introduction
+            </Link>
           </div>
 
           <section className="mt-6 rounded-card border border-rule bg-paper p-5 sm:p-6">

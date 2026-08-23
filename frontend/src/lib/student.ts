@@ -40,6 +40,14 @@ export interface ExperienceEntry {
   bullets: Bullet[];
 }
 
+export interface ProjectEntry {
+  id: string;
+  /** A name, not an employer — nobody hired them to build it. */
+  name: string;
+  dates: string;
+  bullets: Bullet[];
+}
+
 export interface EducationEntry {
   id: string;
   institution: string;
@@ -50,6 +58,8 @@ export interface EducationEntry {
 export interface ParsedResume {
   summary: string;
   experience: ExperienceEntry[];
+  /** Often the strongest evidence a graduate has. Absent from resumes parsed before it was read. */
+  projects: ProjectEntry[];
   education: EducationEntry[];
   skills: string[];
   raw_text: string;
