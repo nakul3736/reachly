@@ -14,6 +14,7 @@ import Feed from "./pages/Feed";
 import JobDetailPage from "./pages/JobDetail";
 import Profile from "./pages/Profile";
 import SignIn from "./pages/SignIn";
+import { TailorPage } from "./pages/Tailor";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -38,6 +39,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Feed />} />
             <Route path="/jobs/:id" element={<JobDetailPage />} />
+            <Route path="/jobs/:id/tailor" element={<TailorPage />} />
             <Route path="/signin" element={<SignIn />} />
             <Route
               path="/profile"

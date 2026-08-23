@@ -193,6 +193,14 @@ export default function JobDetailPage() {
             >
               Apply on {job.data.company_name}&apos;s site
             </a>
+            {/* Placed beside Apply because tailoring is what a student does before applying, not
+                a separate errand they have to go looking for. */}
+            <Link
+              to={`/jobs/${job.data.id}/tailor`}
+              className="rounded-card border border-ink px-4 py-2 text-[15px] font-medium text-ink hover:bg-blueprint"
+            >
+              Tailor my resume for this job
+            </Link>
           </div>
 
           <section className="mt-6 rounded-card border border-rule bg-paper p-5 sm:p-6">

@@ -102,6 +102,16 @@ export const api = {
       },
       { authenticated: true },
     ),
+  post: <T>(path: string, body: unknown) =>
+    request<T>(
+      path,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      { authenticated: true },
+    ),
   postForm: <T>(path: string, form: FormData) =>
     request<T>(path, { method: "POST", body: form }, { authenticated: true }),
 };
