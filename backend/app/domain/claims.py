@@ -59,7 +59,9 @@ _WORD_NUMBER = re.compile(
 # and a rewrite that keeps one asserts no new quantity, so they are not metrics.
 _YEAR = re.compile(r"^(?:19|20)\d{2}$")
 
-_WORD = re.compile(r"[A-Za-z][A-Za-z0-9+#.'’-]*")
+_WORD = re.compile(
+    r"[A-Za-z][A-Za-z0-9+#.'’-]*"  # noqa: RUF001 - a curly apostrophe is real in resume text
+)
 
 # Words that are capitalised for reasons other than being a name: sentence starts, months,
 # and the vocabulary of a resume bullet. Without this list every bullet's first word becomes an
