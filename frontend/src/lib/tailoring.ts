@@ -95,9 +95,16 @@ export const setApprovals = (jobId: number, approved: string[]) =>
  * One request, answered with one model call, so revising six bullets costs what revising one costs.
  * The instructions cannot authorise a new fact — each result is validated against that bullet's own
  * original, and a refusal comes back naming what it tried to add.
+ *
+ * `approved` carries the ticks currently on screen. Feedback and approval happen together on the same
+ * screen, so without sending them the server would answer with whatever it last stored and silently
+ * drop approvals the student had made but not yet applied.
  */
-export const reviseBullets = (jobId: number, revisions: BulletFeedback[]) =>
-  api.post<TailoredResume>(`/api/v1/jobs/${jobId}/tailor/revise`, { revisions });
+export const reviseBullets = (
+  jobId: number,
+  revisions: BulletFeedback[],
+  approved: string[],
+) => api.post<TailoredResume>(`/api/v1/jobs/${jobId}/tailor/revise`, { revisions, approved });
 
 /** Why a rewrite was refused, in the interface's voice rather than the enum's. */
 export function refusalWording(reason: string, detail: string): string {

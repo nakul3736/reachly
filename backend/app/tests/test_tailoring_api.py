@@ -305,7 +305,9 @@ class TestNothingChangesWithoutApproval:
 
         headers = {"Authorization": f"Bearer {token}"}
         await client.patch(
-            f"/api/v1/jobs/{job.id}/tailor/approvals", headers=headers, json={"approved": ["b1"]}
+            f"/api/v1/jobs/{job.id}/tailor/approvals",
+            headers=headers,
+            json={"approved": ["b1"]},
         )
         response = await client.patch(
             f"/api/v1/jobs/{job.id}/tailor/approvals", headers=headers, json={"approved": []}
@@ -398,7 +400,9 @@ class TestRevisionFromFeedback:
         headers = {"Authorization": f"Bearer {token}"}
         await client.post(f"/api/v1/jobs/{job.id}/tailor", headers=headers)
         await client.patch(
-            f"/api/v1/jobs/{job.id}/tailor/approvals", headers=headers, json={"approved": ["b1"]}
+            f"/api/v1/jobs/{job.id}/tailor/approvals",
+            headers=headers,
+            json={"approved": ["b1"]},
         )
 
         response = await client.post(
@@ -444,6 +448,149 @@ class TestRevisionFromFeedback:
         )
 
         assert response.status_code == 404
+
+
+class TestTheBugsFoundByUsingIt:
+    """Three faults reported from the live screen, each with the same root: approval state.
+
+    Approval is the one thing standing between a model's sentence and a document an employer reads, so
+    every way it can be silently lost or silently retained is worth a test.
+    """
+
+    async def _tailored(
+        self, session: AsyncSession, student: Student, resume: ResumeMaster, job: Job
+    ) -> None:
+        session.add(
+            TailoredResume(
+                student_id=student.id,
+                job_id=job.id,
+                resume_master_id=resume.id,
+                bullets=[
+                    {
+                        "bullet_id": "b1",
+                        "original": "Wrote Python scripts to clean survey data.",
+                        "tailored": "Wrote Python scripts to clean and validate survey data.",
+                        "changed": True,
+                        "rejected_reason": None,
+                        "rejected_detail": "",
+                        "rejected_text": "",
+                    },
+                    {
+                        "bullet_id": "b2",
+                        "original": "Built a small SQL database for the results.",
+                        "tailored": "Built and documented a small SQL database for the results.",
+                        "changed": True,
+                        "rejected_reason": None,
+                        "rejected_detail": "",
+                        "rejected_text": "",
+                    },
+                    {
+                        "bullet_id": "b3",
+                        "original": "Answered support tickets for staff laptops.",
+                        "tailored": "Resolved support tickets for staff laptops.",
+                        "changed": True,
+                        "rejected_reason": None,
+                        "rejected_detail": "",
+                        "rejected_text": "",
+                    },
+                ],
+                gaps=[],
+                changed_count=3,
+                rejected_count=0,
+                basis="recorded",
+            )
+        )
+        await session.commit()
+
+    async def test_sending_feedback_keeps_ticks_the_student_had_not_applied_yet(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """Reported: approve some, comment on others, send — and the ticks vanished.
+
+        Approval and feedback happen on one screen. If the request carries the ticks, unsaved
+        approvals survive; if it does not, the server answers with its last stored set and the
+        student's work is silently discarded.
+        """
+        student, resume, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.flush()
+        await self._tailored(session, student, resume, job)
+
+        response = await client.post(
+            f"/api/v1/jobs/{job.id}/tailor/revise",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "revisions": [{"bullet_id": "b3", "instruction": "make it shorter"}],
+                "approved": ["b1", "b2"],
+            },
+        )
+
+        assert response.status_code == 200
+        approved = response.json()["approved_bullet_ids"]
+        assert "b1" in approved, "a tick that was never applied must still survive the request"
+        assert "b2" in approved
+        assert "b3" not in approved, (
+            "the revised line is a different sentence, so it is unapproved"
+        )
+
+    async def test_the_approved_lines_are_in_the_document_after_a_revision(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """Reported: after applying, the resume still said "suggestion waiting for you".
+
+        The client was reading the most recent mutation rather than the cache, so the document it
+        rendered predated the approval. The server side of that contract is asserted here: after a
+        revision that carries ticks, the approved lines are applied in the document and not pending.
+        """
+        student, resume, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.flush()
+        await self._tailored(session, student, resume, job)
+
+        response = await client.post(
+            f"/api/v1/jobs/{job.id}/tailor/revise",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "revisions": [{"bullet_id": "b3", "instruction": "shorter"}],
+                "approved": ["b1"],
+            },
+        )
+
+        first = response.json()["document"]["experience"][0]["bullets"][0]
+        assert first["applied"] is True
+        assert first["pending"] is False, "an applied suggestion must not still be advertised"
+        assert first["text"] == "Wrote Python scripts to clean and validate survey data."
+
+    async def test_starting_over_discards_approvals_rather_than_carrying_them_forward(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """Every sentence after a re-tailoring is newly generated.
+
+        Keeping the ticks would mark text as approved that the student has never read — the exact
+        failure the ids-beside-the-payload design was chosen to prevent, and which the code did not
+        actually implement until this test was written.
+        """
+        student, resume, token = await _signed_in_student(session)
+        job = await _job(session)
+        await session.flush()
+        await self._tailored(session, student, resume, job)
+
+        headers = {"Authorization": f"Bearer {token}"}
+        approved = await client.patch(
+            f"/api/v1/jobs/{job.id}/tailor/approvals",
+            headers=headers,
+            json={"approved": ["b1", "b2"]},
+        )
+        assert approved.json()["approved_bullet_ids"] == ["b1", "b2"]
+
+        again = await client.post(f"/api/v1/jobs/{job.id}/tailor", headers=headers)
+
+        assert again.json()["approved_bullet_ids"] == [], (
+            "re-tailoring produces sentences the student has not seen, so nothing may stay approved"
+        )
+        for entry in again.json()["document"]["experience"]:
+            for bullet in entry["bullets"]:
+                assert bullet["applied"] is False
 
 
 class TestTailoringEndpoint:

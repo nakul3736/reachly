@@ -25,7 +25,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { ResumeDocument } from "../components/ResumeDocument";
@@ -152,7 +152,10 @@ export function TailorPage() {
 
   const tailor = useMutation({
     mutationFn: () => createTailoring(jobId),
-    onSuccess: store,
+    onSuccess: (data) => {
+      store(data);
+      setFeedback({});
+    },
   });
 
   const approve = useMutation({
@@ -162,7 +165,10 @@ export function TailorPage() {
 
   const revise = useMutation({
     mutationFn: (entries: { bullet_id: string; instruction: string }[]) =>
-      reviseBullets(jobId, entries),
+      // The ticks go with the feedback. Both happen on this screen at the same time, and sending
+      // only the comments meant the server answered with its last stored approvals and wiped ticks
+      // the student had made but not yet applied.
+      reviseBullets(jobId, entries, [...approvedIdsRef.current]),
     onSuccess: (data) => {
       store(data);
       // The comments have been answered; leaving them in the boxes would invite sending them twice.
@@ -170,11 +176,29 @@ export function TailorPage() {
     },
   });
 
-  const result = revise.data ?? approve.data ?? tailor.data ?? existing.data;
+  /**
+   * The cache is the single source of truth, not the most recent mutation.
+   *
+   * This read used to be `revise.data ?? approve.data ?? tailor.data ?? existing.data`, which ranks
+   * by which mutation happened to run, not by which is current. Once a revision had been made,
+   * `revise.data` outranked everything for the rest of the session — so approving afterwards updated
+   * the server and the screen carried on showing the pre-approval document, still labelling applied
+   * suggestions as waiting. Every mutation writes to the cache, so reading the cache is both simpler
+   * and correct.
+   */
+  const result = existing.data;
   const notFound = existing.isError && (existing.error as ApiError)?.status === 404;
   const blocked = existing.isError && (existing.error as ApiError)?.status === 409;
 
   const approvedIds = selection ?? new Set(result?.approved_bullet_ids ?? []);
+
+  // The mutation closure would otherwise capture whichever set existed when it was created, and send
+  // a stale list of ticks. A ref is read at call time.
+  const approvedIdsRef = useRef(approvedIds);
+  useEffect(() => {
+    approvedIdsRef.current = approvedIds;
+  }, [approvedIds]);
+
   const pendingFeedback = Object.entries(feedback)
     .filter(([, instruction]) => instruction.trim().length > 0)
     .map(([bullet_id, instruction]) => ({ bullet_id, instruction }));
@@ -352,11 +376,30 @@ export function TailorPage() {
 
                   <button
                     type="button"
-                    onClick={() => tailor.mutate()}
+                    onClick={() => setView("resume")}
+                    className="rounded-card border border-rule px-3 py-2 text-[14px] font-medium text-ink hover:bg-blueprint"
+                  >
+                    Done — see my resume
+                  </button>
+
+                  {/* Destructive, so it says so. Re-tailoring discards every suggestion currently on
+                      screen, including approved ones, and asks the model again from the student's
+                      original bullets. Worth having - a first attempt can come back weak - but not
+                      worth doing by accident after twenty minutes of review. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const approvedCount = approvedIds.size;
+                      const warning =
+                        approvedCount > 0
+                          ? `Start again from your original resume? This discards all ${suggestions.length} suggestions, including the ${approvedCount} you approved.`
+                          : "Start again from your original resume? This discards the current suggestions and asks again.";
+                      if (window.confirm(warning)) tailor.mutate();
+                    }}
                     disabled={tailor.isPending}
                     className="rounded-card border border-rule px-3 py-2 font-receipt text-[12px] text-slate hover:text-ink disabled:opacity-40"
                   >
-                    start over
+                    {tailor.isPending ? "asking again…" : "start over"}
                   </button>
 
                   <span className="ml-auto font-receipt text-[11px] leading-[1.5] text-slate">

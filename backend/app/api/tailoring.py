@@ -350,6 +350,11 @@ async def create_tailoring(
         existing.changed_count = result.changed_count
         existing.rejected_count = result.rejected_count
         existing.basis = basis
+        # And it clears the approvals, which is the whole reason they are stored as ids beside the
+        # payload rather than as a flag inside it. Every sentence here is newly generated; carrying a
+        # tick across would mark text as approved that the student has never read, and the tick is
+        # the one thing standing between a model's output and a document an employer receives.
+        existing.approved_bullet_ids = []
 
     # Committed rather than flushed. `get_session` never commits, so a flush alone meant the
     # tailoring existed for the length of the response and then vanished: a student who tailored a
@@ -407,9 +412,29 @@ class BulletFeedback(BaseModel):
 
 
 class ReviseRequest(BaseModel):
-    """Feedback on several bullets at once, answered with one model call."""
+    """Feedback on several bullets at once, answered with one model call.
+
+    `approved` is optional and carries the student's current ticks. It exists because feedback and
+    approval happen on the same screen at the same time: a student ticks three suggestions, writes
+    comments on two others, and presses send. Without it, the approvals still sitting in the browser
+    were replaced by whatever the server last stored, and three ticks silently disappeared.
+    """
 
     revisions: list[BulletFeedback]
+    approved: list[str] | None = None
+
+
+def _approvable(row: TailoredResume) -> set[str]:
+    """Bullet ids whose rewrite the student could meaningfully approve.
+
+    A refused rewrite is excluded: there is nothing to approve, because the text on offer is already
+    the student's own, and a tick beside it would imply the guard had been overridden.
+    """
+    return {
+        str(bullet.get("bullet_id"))
+        for bullet in (row.bullets or [])
+        if not bullet.get("rejected_reason")
+    }
 
 
 @router.post("/{job_id}/tailor/revise", response_model=TailoredResumeResponse)
@@ -477,7 +502,14 @@ async def revise(
         llm=llm,
     )
 
-    approved = set(row.approved_bullet_ids or [])
+    # The ticks the student has on screen right now, if the client sent them, otherwise what was
+    # last stored. Taking them from the request is what stops an unsaved approval being lost the
+    # moment feedback is sent from the same screen.
+    if body.approved is not None:
+        approved = set(body.approved) & _approvable(row)
+    else:
+        approved = set(row.approved_bullet_ids or [])
+
     for outcome in outcomes:
         bullets[positions[outcome.bullet_id]] = {
             "bullet_id": outcome.bullet_id,
@@ -553,14 +585,7 @@ async def set_approvals(
         session, student_id=student.id, job_id=job.id, resume_id=resume.id
     )
 
-    known = {
-        str(bullet.get("bullet_id"))
-        for bullet in (row.bullets or [])
-        # A refused rewrite cannot be approved: there is nothing to approve, because the text on
-        # offer is already the student's own. Allowing it would put a tick beside a bullet that
-        # never changed and imply the guard had been overridden.
-        if not bullet.get("rejected_reason")
-    }
+    known = _approvable(row)
     row.approved_bullet_ids = sorted(set(body.approved) & known)
 
     await session.commit()
