@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.experience import parse_experience_requirement
+from app.domain.experience import Basis, ExperienceRequirement, parse_experience_requirement
 from app.domain.scoring import MatchBreakdown, StudentProfile, score_job
 from app.domain.skill_extraction import extract_skills, normalise_skill_list
 from app.models.job import Job
@@ -91,8 +91,7 @@ async def score_page(
             results[job.id] = _row_to_breakdown(row)
             continue
 
-        posting_skills = set(job.extracted_skills or []) | extract_skills(job.description or "")
-        requirement = parse_experience_requirement(job.title, job.description or "")
+        posting_skills, requirement = _posting_facts(job, now)
 
         breakdown = score_job(
             profile,
@@ -133,6 +132,47 @@ async def score_page(
     return results
 
 
+def _posting_facts(
+    job: Job, now: datetime
+) -> tuple[set[str], ExperienceRequirement]:
+    """What the posting asks for, read once per posting rather than once per student.
+
+    Both halves of this are student-independent, and both were being recomputed on every render
+    before measurement showed what that cost: of 1.22s spent scoring 200 postings, extracting
+    skills was 0.63s and parsing the experience requirement 0.52s, while the arithmetic those two
+    feed was 0.07s. On a free instance with a tenth of a CPU that is the difference between a feed
+    that loads and one the browser gives up on.
+
+    So the answers are cached on the row the first time anyone needs them. The first student to
+    open a page pays for it; everybody after reads it. The alternative — computing them during the
+    refresh — is better still, and this is the version that does not require a refresh to have run
+    for the feature to work at all.
+    """
+    if job.extracted_skills is not None:
+        skills = set(job.extracted_skills)
+    else:
+        skills = extract_skills(job.description or "")
+        # Written without a timestamp: this is the vocabulary floor, not a finished reading, so
+        # enrichment must still pick the posting up later. ADR 0011.
+        job.extracted_skills = sorted(skills)
+        job.skills_basis = "vocabulary"
+
+    if job.experience_parsed_at is not None:
+        requirement = ExperienceRequirement(
+            years=job.required_years,
+            basis=Basis(job.requirement_basis) if job.requirement_basis else Basis.UNSTATED,
+            phrase=job.requirement_phrase,
+        )
+    else:
+        requirement = parse_experience_requirement(job.title, job.description or "")
+        job.required_years = requirement.years
+        job.requirement_basis = requirement.basis.value
+        job.requirement_phrase = (requirement.phrase or "")[:200] or None
+        job.experience_parsed_at = now
+
+    return skills, requirement
+
+
 def _row_to_breakdown(row: MatchScore) -> MatchBreakdown:
     from app.domain.experience import Basis
     from app.domain.scoring import ComponentState
@@ -159,11 +199,11 @@ def _row_to_breakdown(row: MatchScore) -> MatchBreakdown:
 # How many filtered postings are scored before ranking. Bounded because ordering by score is in
 # tension with computing scores lazily: you cannot sort by a number you have not calculated.
 #
-# 200 is chosen from the index rather than taste. The graduate software filter returns about 170
-# postings, so in practice the whole relevant set is ranked and the ordering is genuinely global.
-# Beyond the cap the feed falls back to recency for the tail, which is the honest failure mode —
-# the alternative, scoring all 4,437 rows per student, is the cost ADR 0003 refused.
-MAX_RANKED = 200
+# 100 rather than the 200 first chosen. The first render of a page has to read every posting it
+# ranks, and on a free instance with a tenth of a CPU that first read is the whole latency budget.
+# Beyond the cap the tail is ordered by recency, reported as ranked_within so the interface can
+# say so. Scoring all 4,437 rows per student is the cost ADR 0003 refused outright.
+MAX_RANKED = 100
 
 
 def rank_by_score(

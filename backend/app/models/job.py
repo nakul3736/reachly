@@ -120,6 +120,22 @@ class Job(Base):
         DateTime(timezone=True), default=None
     )
 
+    # The experience requirement, parsed once and kept.
+    #
+    # This is cached for the same reason the skills are: reading it is student-independent, and
+    # measurement showed it was 0.52s of the 1.22s spent scoring 200 postings — recomputed for
+    # every student, on a free instance with a tenth of a CPU, for an answer that cannot differ
+    # between them. Caching it turned the scored feed from tens of seconds into a fraction of one.
+    #
+    # `experience_parsed_at` distinguishes "parsed and found nothing" from "never parsed", which
+    # matters because unstated is a real answer the score renders differently from silence.
+    required_years: Mapped[float | None] = mapped_column(default=None)
+    requirement_basis: Mapped[str | None] = mapped_column(String(16), default=None)
+    requirement_phrase: Mapped[str | None] = mapped_column(String(200), default=None)
+    experience_parsed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
     __table_args__ = (
         # The constraint that makes ingestion idempotent. A refresh re-run after a crash
         # must not double the index, and this is a constraint rather than a
