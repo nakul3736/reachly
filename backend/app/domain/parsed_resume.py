@@ -49,6 +49,26 @@ class ExperienceEntry(BaseModel):
     bullets: list[Bullet] = Field(default_factory=list)
 
 
+class ProjectEntry(BaseModel):
+    """A personal, academic or open-source project.
+
+    Modelled with bullets like an experience entry rather than as a paragraph, because for a new
+    graduate this is often the strongest evidence in the document — the person with one retail job
+    and four built things is better represented by the four built things. Tailoring reads bullets,
+    so a projects section stored as prose would be excluded from the feature that matters most to
+    exactly the students this product is for.
+
+    `name` rather than `employer`: nobody employed them, and calling it an employer would put a
+    company that does not exist onto a resume.
+    """
+
+    id: str
+    name: str
+    # As written. A project has no HR system, so dates are frequently absent, and absent is fine.
+    dates: str = ""
+    bullets: list[Bullet] = Field(default_factory=list)
+
+
 class EducationEntry(BaseModel):
     id: str
     institution: str
@@ -66,6 +86,7 @@ class ParsedResume(BaseModel):
 
     summary: str = ""
     experience: list[ExperienceEntry] = Field(default_factory=list)
+    projects: list[ProjectEntry] = Field(default_factory=list)
     education: list[EducationEntry] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     raw_text: str = ""
@@ -76,4 +97,10 @@ class ParsedResume(BaseModel):
         A genuinely empty resume is a fact the interface can report. It is never used
         to signal a failure — that is what the parser exceptions are for.
         """
-        return not (self.experience or self.education or self.skills or self.summary.strip())
+        return not (
+            self.experience
+            or self.projects
+            or self.education
+            or self.skills
+            or self.summary.strip()
+        )

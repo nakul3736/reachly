@@ -190,6 +190,29 @@ export function TailorPage() {
   const notFound = existing.isError && (existing.error as ApiError)?.status === 404;
   const blocked = existing.isError && (existing.error as ApiError)?.status === 409;
 
+  /**
+   * First arrival tailors immediately rather than asking.
+   *
+   * Producing the first draft is the application's job, not a favour the student requests: they
+   * pressed "tailor my resume for this job" on the posting, and being met by a second button asking
+   * the same question is a step that exists only because the code was built inside-out. What the
+   * student is here to do is read the suggestions and push back on them, so the page starts with
+   * suggestions to read.
+   *
+   * Guarded by a ref rather than by mutation state. Both are only true *after* the request starts, so
+   * a re-render in the gap between the 404 arriving and the mutation registering would fire a second
+   * model call — and the first thing this page does would be to spend twice the quota.
+   */
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (notFound && !result && !autoStarted.current) {
+      autoStarted.current = true;
+      tailor.mutate();
+    }
+    // `tailor` is stable for the life of the component; listing it would re-run this on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notFound, result]);
+
   const approvedIds = selection ?? new Set(result?.approved_bullet_ids ?? []);
 
   // The mutation closure would otherwise capture whichever set existed when it was created, and send
@@ -259,7 +282,7 @@ export function TailorPage() {
         {notFound && !result && (
           <div className="mt-6 rounded-card border border-rule bg-paper p-5 sm:p-6">
             <h2 className="font-display text-[16px] font-bold text-ink">
-              What this does, and what it will not do
+              {tailor.isError ? "That did not work" : "Rewriting your bullets for this posting…"}
             </h2>
             <p className="mt-2 text-[15px] leading-[1.6] text-slate">
               Reachly rewrites your own bullets to use this posting&apos;s language. It cannot add a
@@ -267,14 +290,22 @@ export function TailorPage() {
               rewrite is checked against the sentence it came from, and anything that introduces a
               new claim is refused and shown to you. Nothing is applied until you approve it.
             </p>
-            <button
-              type="button"
-              onClick={() => tailor.mutate()}
-              disabled={tailor.isPending}
-              className="mt-4 rounded-card border border-ink bg-ink px-4 py-2 text-[15px] font-medium text-paper hover:bg-ink/90 disabled:opacity-60"
-            >
-              {tailor.isPending ? "Rewriting…" : "Tailor my resume for this job"}
-            </button>
+            {tailor.isError && (
+              <>
+                <p className="mt-3 text-[14px] text-closed">
+                  {(tailor.error as ApiError)?.message ??
+                    "The model could not be reached just now."}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => tailor.mutate()}
+                  disabled={tailor.isPending}
+                  className="mt-3 rounded-card border border-ink bg-ink px-4 py-2 text-[15px] font-medium text-paper hover:bg-ink/90 disabled:opacity-60"
+                >
+                  Try again
+                </button>
+              </>
+            )}
           </div>
         )}
 

@@ -41,6 +41,12 @@ export interface DocumentExperience {
   bullets: DocumentBullet[];
 }
 
+export interface DocumentProject {
+  name: string;
+  dates: string;
+  bullets: DocumentBullet[];
+}
+
 export interface DocumentEducation {
   institution: string;
   credential: string;
@@ -54,6 +60,8 @@ export interface TailoredDocument {
   summary: string;
   skills: string[];
   experience: DocumentExperience[];
+  /** Often the strongest part of a graduate resume, and tailored on the same terms. */
+  projects: DocumentProject[];
   education: DocumentEducation[];
 }
 
@@ -143,6 +151,14 @@ export function asPlainText(tailored: TailoredResume): string {
     lines.push("", "EXPERIENCE");
     for (const entry of doc.experience) {
       lines.push("", `${entry.title}, ${entry.employer}${entry.dates ? ` (${entry.dates})` : ""}`);
+      for (const bullet of entry.bullets) lines.push(`• ${bullet.text}`);
+    }
+  }
+
+  if (doc.projects.length > 0) {
+    lines.push("", "PROJECTS");
+    for (const entry of doc.projects) {
+      lines.push("", `${entry.name}${entry.dates ? ` (${entry.dates})` : ""}`);
       for (const bullet of entry.bullets) lines.push(`• ${bullet.text}`);
     }
   }

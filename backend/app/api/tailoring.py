@@ -80,6 +80,12 @@ class DocumentExperience(BaseModel):
     bullets: list[DocumentBullet]
 
 
+class DocumentProject(BaseModel):
+    name: str
+    dates: str
+    bullets: list[DocumentBullet]
+
+
 class DocumentEducation(BaseModel):
     institution: str
     credential: str
@@ -104,6 +110,7 @@ class TailoredDocument(BaseModel):
     summary: str
     skills: list[str]
     experience: list[DocumentExperience]
+    projects: list[DocumentProject] = []
     education: list[DocumentEducation]
 
 
@@ -186,32 +193,43 @@ def _assemble_document(
     outcomes = {str(bullet.get("bullet_id")): bullet for bullet in (row.bullets or [])}
     approved = set(row.approved_bullet_ids or [])
 
-    experience: list[DocumentExperience] = []
-    for entry in parsed.experience:
-        bullets: list[DocumentBullet] = []
-        for bullet in entry.bullets:
-            outcome = outcomes.get(bullet.id)
-            refused = bool(outcome and outcome.get("rejected_reason"))
-            rewrite = str(outcome.get("tailored") or "") if outcome else ""
-            offered = bool(outcome and outcome.get("changed")) and not refused
-            applied = offered and bullet.id in approved
+    def render(bullet_id: str, own_text: str) -> DocumentBullet:
+        """One bullet, resolved against what the student approved.
 
-            bullets.append(
-                DocumentBullet(
-                    text=rewrite if applied and rewrite else bullet.text,
-                    applied=applied,
-                    pending=offered and not applied,
-                    refused=refused,
-                )
-            )
-        experience.append(
-            DocumentExperience(
-                employer=entry.employer,
-                title=entry.title,
-                dates=entry.dates,
-                bullets=bullets,
-            )
+        Shared by experience and projects so the two sections cannot drift apart on the rule that
+        matters most here: an unapproved rewrite is not applied.
+        """
+        outcome = outcomes.get(bullet_id)
+        refused = bool(outcome and outcome.get("rejected_reason"))
+        rewrite = str(outcome.get("tailored") or "") if outcome else ""
+        offered = bool(outcome and outcome.get("changed")) and not refused
+        applied = offered and bullet_id in approved
+
+        return DocumentBullet(
+            text=rewrite if applied and rewrite else own_text,
+            applied=applied,
+            pending=offered and not applied,
+            refused=refused,
         )
+
+    experience = [
+        DocumentExperience(
+            employer=entry.employer,
+            title=entry.title,
+            dates=entry.dates,
+            bullets=[render(bullet.id, bullet.text) for bullet in entry.bullets],
+        )
+        for entry in parsed.experience
+    ]
+
+    projects = [
+        DocumentProject(
+            name=project.name,
+            dates=project.dates,
+            bullets=[render(bullet.id, bullet.text) for bullet in project.bullets],
+        )
+        for project in parsed.projects
+    ]
 
     return TailoredDocument(
         name=student.name or "",
@@ -223,6 +241,7 @@ def _assemble_document(
         # prevent, and it is the easiest place to do it by accident.
         skills=list(parsed.skills),
         experience=experience,
+        projects=projects,
         education=[
             DocumentEducation(
                 institution=entry.institution,

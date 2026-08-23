@@ -73,14 +73,23 @@ class TailoringResult:
 
 
 def _bullets_of(resume: ParsedResume) -> list[tuple[str, str]]:
-    """Every bullet with its content-derived id, across all experience entries.
+    """Every bullet with its content-derived id, across experience and projects.
 
     Ids come from the parse (feature 01) and are content-derived rather than positional, so a
     provenance map still points at the right sentence after the resume is re-parsed.
+
+    Projects are included because for a graduate they are often the strongest material in the
+    document. Tailoring only what an employer paid for would leave the student with the strongest
+    half of their resume untouched — the person with one retail job and four built things would have
+    the retail job tailored and the four built things ignored.
     """
     pairs: list[tuple[str, str]] = []
     for entry in resume.experience:
         for bullet in entry.bullets:
+            if bullet.text.strip():
+                pairs.append((bullet.id, bullet.text))
+    for project in resume.projects:
+        for bullet in project.bullets:
             if bullet.text.strip():
                 pairs.append((bullet.id, bullet.text))
     return pairs

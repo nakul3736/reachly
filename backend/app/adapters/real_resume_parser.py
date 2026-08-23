@@ -34,6 +34,7 @@ from app.domain.parsed_resume import (
     EducationEntry,
     ExperienceEntry,
     ParsedResume,
+    ProjectEntry,
     derive_id,
 )
 
@@ -62,6 +63,14 @@ Layouts vary. Section headings may be upper case or title case. Bullets may use 
 a hyphen, or nothing at all. The employer may come before or after the job title, and the
 date may sit on the title line, the employer line, or its own line. Read what is there.
 
+Projects are a separate section from experience, and often the most substantial part of a
+graduate resume. Headings include "Projects", "Personal Projects", "Academic Projects",
+"Technical Projects" and "Selected Work". Put them in "projects", never in "experience":
+nobody employed the student to build them, and inventing an employer for a personal project
+puts a company on their resume that does not exist. A project frequently has no dates, which
+is fine — return an empty string. Course work described under an education entry stays where
+it is; only a distinct projects section becomes a project.
+
 Return exactly this shape:
 
 {
@@ -69,6 +78,9 @@ Return exactly this shape:
   "skills": ["string", ...],
   "experience": [
     {"employer": "string", "title": "string", "dates": "string", "bullets": ["string", ...]}
+  ],
+  "projects": [
+    {"name": "string", "dates": "string", "bullets": ["string", ...]}
   ],
   "education": [
     {"institution": "string", "credential": "string", "dates": "string"}
@@ -107,6 +119,7 @@ class RealResumeParser:
 def _build(payload: dict[str, object], raw_text: str) -> ParsedResume:
     """Turn a model response into a `ParsedResume`, keeping only evidenced content."""
     experience = _experience(payload.get("experience"), raw_text)
+    projects = _projects(payload.get("projects"), raw_text)
     education = _education(payload.get("education"), raw_text)
     skills = _skills(payload.get("skills"), raw_text)
     summary = _string(payload.get("summary"))
@@ -121,6 +134,7 @@ def _build(payload: dict[str, object], raw_text: str) -> ParsedResume:
     parsed = ParsedResume(
         summary=summary,
         experience=experience,
+        projects=projects,
         education=education,
         skills=skills,
         raw_text=raw_text,
@@ -162,10 +176,44 @@ def _experience(value: object, raw_text: str) -> list[ExperienceEntry]:
                 dates=_evidenced_or_blank(item.get("dates"), raw_text, kind="dates"),
                 bullets=[
                     Bullet(id=derive_id(entry_id, text), text=text)
-                    for text in _evidenced_strings(
-                        item.get("bullets"), raw_text, kind="bullet"
-                    )
+                    for text in _evidenced_strings(item.get("bullets"), raw_text, kind="bullet")
                 ],
+            )
+        )
+    return entries
+
+
+def _projects(value: object, raw_text: str) -> list[ProjectEntry]:
+    """Projects, held to the same evidence rules as experience.
+
+    One difference in severity. A fabricated employer fails the whole parse, because a job the
+    student never had is a claim they might believe came from their own document. A fabricated
+    project name is dropped instead: the entry is skipped and the rest of the resume survives. Both
+    refuse the invention; the harsher response is reserved for the harsher lie.
+    """
+    entries: list[ProjectEntry] = []
+    for item in _dicts(value):
+        name = _string(item.get("name"))
+        if not name:
+            continue
+
+        if not appears_in(name, raw_text):
+            logger.warning(
+                "resume parse: dropped a project name absent from the source: %r", name
+            )
+            continue
+
+        entry_id = derive_id("project", name, _string(item.get("dates")))
+        bullets = [
+            Bullet(id=derive_id(entry_id, text), text=text)
+            for text in _evidenced_strings(item.get("bullets"), raw_text, kind="bullet")
+        ]
+        entries.append(
+            ProjectEntry(
+                id=entry_id,
+                name=name,
+                dates=_evidenced_or_blank(item.get("dates"), raw_text, kind="dates"),
+                bullets=bullets,
             )
         )
     return entries

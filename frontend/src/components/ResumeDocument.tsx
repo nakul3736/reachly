@@ -109,6 +109,41 @@ export function ResumeDocument({ document: doc }: { document: TailoredDocument }
         </section>
       )}
 
+      {doc.projects.length > 0 && (
+        <section className="mt-6">
+          <h3 className="font-receipt text-[11px] uppercase tracking-[0.1em] text-slate">
+            Projects
+          </h3>
+          {/* Its own section, kept out of experience: nobody employed the student to build these,
+              and filing a personal project under an employer would put a company on the resume that
+              does not exist. For most graduates this is the strongest material in the document, so
+              it is tailored on exactly the same terms as paid work. */}
+          <div className="mt-3 space-y-4">
+            {doc.projects.map((entry, index) => (
+              <div key={`${entry.name}-${index}`}>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <p className="text-[15px] font-semibold">{entry.name}</p>
+                  {entry.dates && (
+                    <p className="font-receipt text-[12px] text-slate">{entry.dates}</p>
+                  )}
+                </div>
+                <ul className="mt-1.5 space-y-1">
+                  {entry.bullets.map((bullet, bulletIndex) => (
+                    <li
+                      key={bulletIndex}
+                      className="relative pl-4 text-[14px] leading-[1.55] before:absolute before:left-0 before:content-['•']"
+                    >
+                      {bullet.text}
+                      <Marker bullet={bullet} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {doc.education.length > 0 && (
         <section className="mt-6">
           <h3 className="font-receipt text-[11px] uppercase tracking-[0.1em] text-slate">
