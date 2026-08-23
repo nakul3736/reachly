@@ -65,7 +65,17 @@ class Settings(BaseSettings):
     # guess goes stale; and in testing the moving alias returned 503 in the same minute
     # that two pinned models returned 200. A judged window is the wrong time for the model
     # to change underneath us.
-    gemini_model: str = "gemini-3.6-flash"
+    # Changed from gemini-3.6-flash on 23 Aug after it began returning 429 for every request while
+    # the same key got 200 from 3.5-flash in the same second. Measured, not assumed:
+    #
+    #   gemini-3.6-flash -> 429 "You exceeded your current quota"
+    #   gemini-3.5-flash -> 200
+    #   gemini-2.5-flash -> 404 no longer available
+    #   gemini-2.0-flash -> 404 no longer available
+    #   gemini-1.5-flash -> 404 not found
+    #
+    # Free-tier quotas are per model, so the newest model is not the one with room in it.
+    gemini_model: str = "gemini-3.5-flash"
 
     # Generous, because structuring a two-page resume is a single large completion and
     # the alternative to waiting is failing an upload the student cannot retry cheaply.
