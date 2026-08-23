@@ -137,7 +137,19 @@ async def score_page(
 
     if to_insert:
         session.add_all(to_insert)
-        await session.flush()
+
+    # Committed here, not left to the caller. `get_session` yields a session and never commits, so
+    # a flush alone is discarded when the request ends — which is what was happening: every render
+    # recomputed every score, wrote the answer, and threw it away. The cache measured as 1179x
+    # faster in isolation and was doing nothing in production, because nothing was ever stored.
+    #
+    # This also persists the posting facts `_posting_facts` writes onto the job row, which have the
+    # same problem and matter more: they are student-independent, so the first student to open a
+    # page should be the only one who ever pays for reading it.
+    #
+    # Safe during a GET. What is being written is a cache of a pure function, so a request that
+    # fails after this point leaves nothing invalid behind.
+    await session.commit()
 
     return results
 

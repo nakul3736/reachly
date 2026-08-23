@@ -331,5 +331,10 @@ async def enrich_job_skills(
                 summary.enriched += 1
                 summary.basis_counts[basis] = summary.basis_counts.get(basis, 0) + 1
 
-    await session.flush()
+    # Committed, not flushed. This currently survives only because `deduplicate` runs afterwards in
+    # the same cron session and commits, which is an accident: reordering the cycle, or a
+    # deduplication failure, would silently discard a batch of model calls that had already been
+    # paid for. It also puts the "enrichment failure never timestamps, so it is retried" invariant
+    # at the mercy of a function that knows nothing about it.
+    await session.commit()
     return summary
