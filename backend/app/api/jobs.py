@@ -192,9 +192,7 @@ async def list_jobs(
         include_closed=include_closed,
     )
 
-    profile = (
-        await get_student_profile(session, student.id) if student and resume_id else None
-    )
+    profile = await get_student_profile(session, student.id) if student and resume_id else None
 
     # Unscored path: no token, no resume, or a resume that has not parsed. The feed is public and
     # must work for all three, ordered by recency, so browsing the index never requires an
@@ -215,9 +213,7 @@ async def list_jobs(
     # Scored path. Ordering by score and computing scores lazily are in tension — you cannot sort
     # by a number you have not calculated — so a bounded window of the filtered set is scored and
     # ranked. See MAX_RANKED for why the bound is where it is.
-    window = await job_service.list_jobs(
-        session, page=1, page_size=MAX_RANKED, filters=filters
-    )
+    window = await job_service.list_jobs(session, page=1, page_size=MAX_RANKED, filters=filters)
     scores = await score_page(
         session,
         student_id=student.id,
@@ -285,7 +281,11 @@ async def filter_options() -> dict[str, list[str]]:
 
 
 @router.get("/{job_id}", response_model=JobDetail)
-async def get_job(job_id: int, session: AsyncSession = Depends(get_session)) -> JobDetail:
+async def get_job(
+    job_id: int,
+    session: AsyncSession = Depends(get_session),
+    identity: tuple[Student | None, int | None] = Depends(_optional_student),
+) -> JobDetail:
     job = await job_service.get_job(session, job_id)
     aliases = await job_service.get_aliases(session, job_id)
 
@@ -293,4 +293,25 @@ async def get_job(job_id: int, session: AsyncSession = Depends(get_session)) -> 
     detail.also_seen_on = [
         JobAlias.model_validate(alias, from_attributes=True) for alias in aliases
     ]
+
+    # The detail page is where the score is explained: which skills matched, which the posting
+    # asked for and the resume lacks, and the sentence the experience requirement was read from.
+    # The feed can only afford the bar. Scoring one posting is cheap, so this is computed here
+    # rather than passed through from the feed — a student who opens a job from a link, or
+    # reloads the page, is owed the same explanation as one who arrived by scrolling.
+    student, resume_id = identity
+    if student is not None and resume_id is not None:
+        profile = await get_student_profile(session, student.id)
+        if profile is not None:
+            scores = await score_page(
+                session,
+                student_id=student.id,
+                resume_master_id=resume_id,
+                jobs=[job],
+                profile=profile,
+            )
+            breakdown = scores.get(job.id)
+            if breakdown:
+                detail.score = _to_schema(breakdown)
+
     return detail

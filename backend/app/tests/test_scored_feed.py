@@ -23,7 +23,9 @@ from app.services.scoring_service import get_student_profile, score_page
 PARSED = {
     "summary": "Graduate developer",
     "skills": ["Python", "SQL", "Docker"],
-    "experience": [{"id": "e1", "employer": "Lab", "title": "Intern", "dates": "2025", "bullets": []}],
+    "experience": [
+        {"id": "e1", "employer": "Lab", "title": "Intern", "dates": "2025", "bullets": []}
+    ],
     "education": [],
     "raw_text": "Python SQL Docker FastAPI PostgreSQL student projects",
 }
@@ -317,3 +319,119 @@ class TestTheFeed:
         )
 
         assert response.json()["total"] == 0
+
+
+class TestTheDetailPageExplainsTheScore:
+    """The feed shows a bar; the detail page has to show the reasoning behind it.
+
+    These tests exist because the explanation was written into the interface and then never
+    reached it. The detail handler took only a job id, so it returned no score, and the panel
+    that renders the matched skills, the missing skills and the quoted requirement was
+    conditional on a field that was always absent. Every feed test passed, because the feed was
+    never the broken surface. A student could see that they scored 50 and had no way to learn
+    why.
+    """
+
+    async def test_the_detail_response_carries_the_score(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        _, _, token = await _student_with_resume(session)
+        job = await _job(
+            session,
+            job_id="d1",
+            title="Backend Engineer",
+            description="You will use Python and Docker. Kubernetes required. 2+ years required.",
+        )
+        await session.commit()
+
+        response = await client.get(
+            f"/api/v1/jobs/{job.id}", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert response.status_code == 200
+        score = response.json()["score"]
+        assert score is not None, "the detail page cannot explain a score it was not given"
+        assert score["total"] >= 0
+
+    async def test_the_detail_score_names_what_matched_and_what_is_missing(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """The point of the page: a student learns which term to go and learn."""
+        _, _, token = await _student_with_resume(session)
+        job = await _job(
+            session,
+            job_id="d2",
+            title="Backend Engineer",
+            description=(
+                "You will write Python against PostgreSQL. Experience with Kubernetes is "
+                "required. 2+ years of experience required."
+            ),
+        )
+        await session.commit()
+
+        response = await client.get(
+            f"/api/v1/jobs/{job.id}", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        score = response.json()["score"]
+        # The resume in PARSED has Python, SQL and Docker, and no Kubernetes.
+        assert "Python" in score["matched_skills"]
+        assert "Kubernetes" in score["missing_skills"]
+        assert "Kubernetes" not in score["matched_skills"]
+
+    async def test_the_detail_score_quotes_the_requirement_it_read(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """A number asserted is a claim; the sentence it came from is evidence."""
+        _, _, token = await _student_with_resume(session)
+        job = await _job(
+            session,
+            job_id="d3",
+            title="Backend Engineer",
+            description="Python role. 3+ years of professional experience required.",
+        )
+        await session.commit()
+
+        response = await client.get(
+            f"/api/v1/jobs/{job.id}", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        score = response.json()["score"]
+        assert score["required_years"] == 3
+        assert score["requirement_basis"] == "required"
+        assert score["requirement_phrase"], "the phrase is the receipt for the number"
+        assert "3" in score["requirement_phrase"]
+
+    async def test_an_anonymous_reader_still_sees_the_posting(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """Scoring must never become the price of reading a job description."""
+        job = await _job(session, job_id="d4", title="Engineer", description="Python role.")
+        await session.commit()
+
+        response = await client.get(f"/api/v1/jobs/{job.id}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["score"] is None
+        assert body["description"], "the posting itself is public"
+
+    async def test_a_student_without_a_resume_still_sees_the_posting(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        user = User(
+            email="noresume-detail@example.test", password_hash=hash_password("Passw0rd!x")
+        )
+        session.add(user)
+        await session.flush()
+        session.add(Student(user_id=user.id, name="No Resume"))
+        job = await _job(session, job_id="d5", title="Engineer", description="Python role.")
+        await session.commit()
+
+        response = await client.get(
+            f"/api/v1/jobs/{job.id}",
+            headers={"Authorization": f"Bearer {create_access_token(user.id)}"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["score"] is None
