@@ -66,9 +66,21 @@ export function JobCard({
             <VerificationChip verified={job.is_verified} />
           )}
 
-          {/* The decomposed score joins this column, as the card's original note anticipated. */}
+          {/* The decomposed score joins this column, as the card's original note anticipated.
+              The bar is a diagnosis in shape only - it can show that the experience segment is
+              short without saying which sentence made it short. So it carries an explicit route
+              to the reasoning. Without this the only path was the job title, which reads as "go
+              to the posting" rather than "show me why", and the receipt went unfound. */}
           {job.score ? (
-            <ScoreBar score={job.score} compact />
+            <div className="flex flex-col items-start gap-1 sm:items-end">
+              <ScoreBar score={job.score} compact />
+              <Link
+                to={`/jobs/${job.id}`}
+                className="font-receipt text-[11px] tracking-[0.02em] text-slate underline decoration-rule underline-offset-2 hover:text-ink hover:decoration-ink"
+              >
+                why this scored {job.score.total}
+              </Link>
+            </div>
           ) : (
             scoreAbsentReason && <ScoreAbsent reason={scoreAbsentReason} />
           )}
