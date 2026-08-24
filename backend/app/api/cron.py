@@ -14,6 +14,8 @@ Two deliberate choices:
   are expected, so running a task twice has to be harmless rather than merely unlikely.
 """
 
+import logging
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -23,9 +25,27 @@ from app.adapters.llm_client import LLMClient, LLMError, get_llm_client
 from app.config import get_settings
 from app.db import get_session
 from app.services.dedup_service import deduplicate
-from app.services.ingest_service import refresh_all_boards
+from app.services.ingest_service import DEFAULT_MAX_SECONDS, refresh_all_boards
 from app.services.job_service import classify_stored_jobs
-from app.services.skill_enrichment_service import enrich_job_skills
+from app.services.skill_enrichment_service import EnrichmentSummary, enrich_job_skills
+
+logger = logging.getLogger(__name__)
+
+# The wall-clock budget for one refresh request.
+#
+# Set from measurement rather than taste: a healthy run of this endpoint takes about 100 seconds,
+# and the scheduled run that failed took 440 before a proxy returned 502. 150 leaves headroom over
+# the healthy case while staying far enough below the proxy's patience that a slow board or a
+# rate-limited enrichment cannot push the request past it.
+#
+# Being cut short costs nothing durable. Boards are swept least-recently-fetched first, so a short
+# run defers work to the next run rather than losing it, and the schedule runs twice a day.
+_REQUEST_BUDGET_SECONDS = 150.0
+
+# Enrichment is skipped when less than this remains. Twelve live batches with rate-limit backoff is
+# the slowest thing in the request and the only phase whose absence degrades gracefully: without a
+# fresh reading the vocabulary still produces a skill set, so every score still works.
+_ENRICHMENT_RESERVE_SECONDS = 45.0
 
 router = APIRouter(prefix="/internal/cron", tags=["internal"])
 
@@ -96,8 +116,33 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
     Dedup runs last, after classification, and that order is also deliberate: it reuses the
     seniority and role family just derived to rule pairs out for free, which is what keeps the
     ambiguous band — the only part of this feature that spends inference — as small as it is.
+
+    **The whole request has a budget, not just each phase.** Every phase was bounded
+    individually and nothing bounded their sum, so a slow run could reach roughly nine minutes —
+    four for the board sweep, plus classification, plus up to twelve live enrichment calls each
+    able to spend six seconds on rate-limit backoff, plus dedup. The scheduled refresh was
+    returning **502 after seven minutes** while a manual run of the same code finished in one
+    minute forty, because a proxy in front of the container gives up long before the work does.
+
+    A phase-by-phase budget is the wrong instrument for a wall-clock limit imposed from outside.
+    So the deadline is shared: the sweep is told how much of the window it may use, and
+    enrichment is skipped entirely when too little is left. Skipping it is safe in a way that
+    skipping the others is not — with no fresh reading the vocabulary still produces a skill set,
+    so scores keep working and simply say which reading produced them, whereas an unclassified
+    posting is invisible to every filter in the feed.
+
+    Nothing is lost by stopping early. Boards are swept least-recently-fetched first, so the ones
+    a short run misses are the ones the next run begins with, and enrichment picks up where it
+    left off because success is what timestamps a posting.
     """
-    summary = await refresh_all_boards(session)
+    started = time.monotonic()
+
+    # Leaves room for classification and dedup inside the overall budget. Deliberately well under
+    # what the proxy tolerates: the aim is a request that always answers, not one that finishes
+    # every board in one go.
+    sweep_budget = min(DEFAULT_MAX_SECONDS, _REQUEST_BUDGET_SECONDS * 0.6)
+
+    summary = await refresh_all_boards(session, max_seconds=sweep_budget)
     classified = await classify_stored_jobs(session)
 
     # Skills are read here rather than at render time, per ADR 0011: the feed is forbidden from
@@ -108,7 +153,18 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
     # An inference client is passed when one is configured. Unlike dedup, this call has a
     # useful fallback: with no key the vocabulary still produces a skill set, so the score
     # works everywhere and simply says which reading produced it.
-    enriched = await enrich_job_skills(session, llm=_optional_llm())
+    remaining = _REQUEST_BUDGET_SECONDS - (time.monotonic() - started)
+    enrichment_skipped = remaining < _ENRICHMENT_RESERVE_SECONDS
+
+    if enrichment_skipped:
+        logger.info(
+            "skipping skill enrichment: %.0fs of budget left, needs %.0fs",
+            remaining,
+            _ENRICHMENT_RESERVE_SECONDS,
+        )
+        enriched = EnrichmentSummary()
+    else:
+        enriched = await enrich_job_skills(session, llm=_optional_llm())
 
     # No inference client is passed to dedup. Its deterministic bands do the work, and the
     # deployed demo has no key at all — a refresh that needed one would do nothing in the
@@ -143,6 +199,10 @@ async def refresh_jobs(session: SessionDep) -> dict[str, object]:
         "deadline_reached": summary.deadline_reached,
         "elapsed_seconds": summary.elapsed_seconds,
         "classified": classified,
+        # True when there was not enough of the request budget left to read skills. Reported rather
+        # than inferred from a zero count, because "read nothing" and "did not run" are different
+        # facts and a scheduler's history is the only place anyone will notice the difference.
+        "skills_read_skipped_for_budget": enrichment_skipped,
         "skills_read": {
             "considered": enriched.considered,
             "enriched": enriched.enriched,
