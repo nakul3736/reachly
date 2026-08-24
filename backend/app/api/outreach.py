@@ -24,7 +24,7 @@ the company's own site, and the apply link remains the path that cannot fail.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +37,7 @@ from app.models.outreach_draft import OutreachDraftRow
 from app.models.resume import ResumeMaster
 from app.models.student import Student
 from app.services import job_service, resume_service
-from app.services.outreach_service import write_outreach
+from app.services.outreach_service import revise_outreach, write_outreach
 from app.services.scoring_service import get_student_profile, score_page
 
 router = APIRouter(prefix="/jobs", tags=["outreach"])
@@ -68,6 +68,12 @@ class OutreachResponse(BaseModel):
     # Present so the interface can be honest that Reachly is not finding the address. ADR 0004.
     apply_url: str
     other_open_roles: int
+
+
+class ReviseOutreachRequest(BaseModel):
+    """What the student wants changed, in their own words."""
+
+    instruction: str = Field(min_length=1, max_length=500)
 
 
 async def _count_other_open_roles(session: AsyncSession, job: Job) -> int:
@@ -141,7 +147,12 @@ async def _matched_skills(
 
 
 async def _build(
-    session: AsyncSession, *, job_id: int, user_id: int, force: bool
+    session: AsyncSession,
+    *,
+    job_id: int,
+    user_id: int,
+    force: bool,
+    instruction: str = "",
 ) -> OutreachResponse:
     job = await job_service.get_job(session, job_id)
     student = await _student_of(session, user_id)
@@ -177,16 +188,35 @@ async def _build(
     matched = await _matched_skills(session, student=student, resume=resume, job=job)
     parsed = resume_service.parsed_of(resume) if resume is not None else None
 
-    draft = await write_outreach(
-        student_name=student.name or "",
-        job_title=job.title,
-        company=job.company_name,
-        description=job.description or "",
-        resume=parsed,
-        matched_skills=matched,
-        other_open_roles=other_roles,
-        llm=get_llm_client(),
-    )
+    if instruction.strip() and stored is not None:
+        # The previous draft is shown to the writer, because "make it shorter" means nothing without it.
+        # What it is checked against is still the resume, never the previous draft — comparing each
+        # revision with the last would let a claim arrive by degrees, the drift the tailoring loop is
+        # built to prevent.
+        draft = await revise_outreach(
+            instruction=instruction,
+            previous_subject=stored.subject,
+            previous_body=stored.body,
+            student_name=student.name or "",
+            job_title=job.title,
+            company=job.company_name,
+            description=job.description or "",
+            resume=parsed,
+            matched_skills=matched,
+            other_open_roles=other_roles,
+            llm=get_llm_client(),
+        )
+    else:
+        draft = await write_outreach(
+            student_name=student.name or "",
+            job_title=job.title,
+            company=job.company_name,
+            description=job.description or "",
+            resume=parsed,
+            matched_skills=matched,
+            other_open_roles=other_roles,
+            llm=get_llm_client(),
+        )
 
     if stored is None:
         stored = OutreachDraftRow(
@@ -230,8 +260,24 @@ async def rewrite_outreach(
     """Write it again.
 
     Generation is not deterministic, so a second attempt is a genuinely different email rather than a
-    retry of the same one — which is the honest answer to "I don't like this draft" when the student has
-    no way to instruct a rewrite. It is a POST because it spends a model call and replaces the stored
-    draft; a GET that did that would be re-run by every prefetch and refresh.
+    retry of the same one. Kept alongside the instruction-driven path because "I don't like this, give me
+    another" is a real request that does not always come with a reason attached.
     """
     return await _build(session, job_id=job_id, user_id=user.id, force=True)
+
+
+@router.post("/{job_id}/outreach/revise", response_model=OutreachResponse)
+async def revise_outreach_endpoint(
+    job_id: int, body: ReviseOutreachRequest, user: CurrentUser, session: SessionDep
+) -> OutreachResponse:
+    """Rewrite the email the way the student asked.
+
+    This closes an asymmetry that had no justification: a student could push back on a resume bullet with
+    an instruction, but could only reroll the email blindly and hope. Their instruction changes what the
+    writer aims for and not what it may claim — validation is unchanged, so "say I know Kubernetes" is
+    refused exactly as it would be in a first draft, and the plain assembled version is what they get if
+    two attempts fail.
+    """
+    return await _build(
+        session, job_id=job_id, user_id=user.id, force=True, instruction=body.instruction
+    )

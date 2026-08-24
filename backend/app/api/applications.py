@@ -161,6 +161,37 @@ async def list_applications(user: CurrentUser, session: SessionDep) -> PipelineR
     )
 
 
+@router.get("/for-job/{job_id}", response_model=ApplicationView | None)
+async def for_job(job_id: int, user: CurrentUser, session: SessionDep) -> ApplicationView | None:
+    """This student's application for one posting, or null when it is not tracked.
+
+    Declared before `/{application_id}` so the literal segment wins the match — the same ordering trap
+    the resume endpoints hit, where `/parsed` was being read as an id.
+
+    Null rather than 404 for an untracked posting. "Not tracked" is a normal state that the posting page
+    asks about on every visit, and a 404 would make the ordinary case look like an error in the console
+    and in any error reporting.
+    """
+    student = await _student_of(session, user.id)
+
+    row = (
+        (
+            await session.execute(
+                select(Application, Job)
+                .join(Job, Job.id == Application.job_id)
+                .where(Application.student_id == student.id, Application.job_id == job_id)
+            )
+        )
+        .tuples()
+        .first()
+    )
+    if row is None:
+        return None
+
+    application, job = row
+    return _view(application, job)
+
+
 @router.post("", response_model=ApplicationView, status_code=201)
 async def track(body: TrackRequest, user: CurrentUser, session: SessionDep) -> ApplicationView:
     """Start tracking a posting, or update the one already tracked.

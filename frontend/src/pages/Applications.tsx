@@ -12,6 +12,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
@@ -50,6 +51,12 @@ export function Applications() {
   const move = useMutation({
     mutationFn: ({ id, status }: { id: number; status: ApplicationStatus }) =>
       updateApplication(id, { status }),
+    onSuccess: () => cache.invalidateQueries({ queryKey: applicationKeys.pipeline }),
+  });
+
+  const note = useMutation({
+    mutationFn: ({ id, notes }: { id: number; notes: string }) =>
+      updateApplication(id, { notes }),
     onSuccess: () => cache.invalidateQueries({ queryKey: applicationKeys.pipeline }),
   });
 
@@ -117,8 +124,10 @@ export function Applications() {
               key={application.id}
               application={application}
               onMove={(status) => move.mutate({ id: application.id, status })}
+              onNote={(notes) => note.mutate({ id: application.id, notes })}
               onRemove={() => remove.mutate(application.id)}
               busy={move.isPending || remove.isPending}
+              savingNote={note.isPending && note.variables?.id === application.id}
             />
           ))}
         </ul>
@@ -130,14 +139,29 @@ export function Applications() {
 function Row({
   application,
   onMove,
+  onNote,
   onRemove,
   busy,
+  savingNote,
 }: {
   application: Application;
   onMove: (status: ApplicationStatus) => void;
+  onNote: (notes: string) => void;
   onRemove: () => void;
   busy: boolean;
+  savingNote: boolean;
 }) {
+  /**
+   * Held locally while typing and saved explicitly.
+   *
+   * Not debounced auto-save: this field is where an interview time and a recruiter's name end up, and
+   * a request firing mid-sentence can persist half of one and lose the rest if the tab closes. An
+   * explicit save also means the student can abandon an edit, which auto-save takes away.
+   */
+  const [draft, setDraft] = useState(application.notes);
+  const [open, setOpen] = useState(application.notes.length > 0);
+  const dirty = draft !== application.notes;
+
   const waiting =
     application.status === "applied" && application.applied_at
       ? daysSince(application.applied_at)
@@ -236,10 +260,55 @@ function Row({
         </p>
       )}
 
-      {application.notes && (
-        <p className="mt-2 whitespace-pre-line text-[14px] leading-[1.55] text-slate">
-          {application.notes}
-        </p>
+      {open ? (
+        <div className="mt-3 border-t border-rule pt-3">
+          <label className="block">
+            <span className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+              your notes — who you spoke to, what they asked, what to follow up on
+            </span>
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              rows={3}
+              maxLength={5000}
+              placeholder="Phone screen 4 Sep, 2pm with Priya on the platform team. She asked about the caching work — read up on eviction before the next round."
+              className="mt-1 w-full rounded-card border border-rule bg-paper px-3 py-2 text-[14px] leading-[1.55] text-ink placeholder:text-slate/60 focus:border-ink focus:outline-none"
+            />
+          </label>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => onNote(draft)}
+              disabled={!dirty || savingNote}
+              className="rounded-card border border-ink px-3 py-1.5 text-[14px] font-medium text-ink hover:bg-blueprint disabled:opacity-50"
+            >
+              {savingNote ? "Saving…" : "Save note"}
+            </button>
+            {dirty && !savingNote && (
+              <button
+                type="button"
+                onClick={() => setDraft(application.notes)}
+                className="font-receipt text-[11px] tracking-[0.02em] text-slate underline underline-offset-2 hover:text-ink"
+              >
+                discard changes
+              </button>
+            )}
+            {/* Stated because an unsaved note is the kind of loss a student only discovers later. */}
+            {dirty && (
+              <span className="font-receipt text-[11px] tracking-[0.02em] text-closed">
+                not saved yet
+              </span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="mt-2 font-receipt text-[11px] tracking-[0.02em] text-slate underline decoration-rule underline-offset-2 hover:text-ink"
+        >
+          add a note
+        </button>
       )}
     </li>
   );

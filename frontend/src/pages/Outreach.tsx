@@ -23,6 +23,7 @@ import {
   fetchOutreach,
   mailtoLink,
   outreachKeys,
+  reviseOutreach,
   rewriteOutreach,
   type Outreach,
 } from "../lib/outreach";
@@ -33,6 +34,7 @@ export function OutreachPage() {
   const cache = useQueryClient();
 
   const [recipient, setRecipient] = useState("");
+  const [instruction, setInstruction] = useState("");
   const [copied, setCopied] = useState<"none" | "body" | "subject">("none");
 
   const job = useQuery({
@@ -55,6 +57,18 @@ export function OutreachPage() {
     // were still waiting.
     onSuccess: (next: Outreach) => cache.setQueryData(outreachKeys.outreach(jobId), next),
   });
+
+  const revise = useMutation({
+    mutationFn: (what: string) => reviseOutreach(jobId, what),
+    onSuccess: (next: Outreach) => {
+      cache.setQueryData(outreachKeys.outreach(jobId), next);
+      // Cleared on success only. A failed revision keeps the instruction, because retyping it is the
+      // last thing somebody wants after being told it did not work.
+      setInstruction("");
+    },
+  });
+
+  const busy = rewrite.isPending || revise.isPending;
 
   const copy = async (what: "body" | "subject", text: string) => {
     await navigator.clipboard.writeText(text);
@@ -171,11 +185,47 @@ export function OutreachPage() {
               <button
                 type="button"
                 onClick={() => rewrite.mutate()}
-                disabled={rewrite.isPending}
+                disabled={busy}
                 className="rounded-card border border-rule px-4 py-2 text-[15px] text-slate hover:border-ink hover:text-ink disabled:opacity-60"
               >
                 {rewrite.isPending ? "Writing another…" : "Write me a different one"}
               </button>
+            </div>
+
+            {/*
+              The asymmetry this closes had no justification: a student could argue with a resume bullet
+              and could only reroll the email and hope. Their instruction changes what the writer aims
+              for, never what it is allowed to claim — asking it to say you know Kubernetes is refused
+              exactly as a first draft would be, and the refusal is worth more than a compliant lie
+              because it tells you the resume is what needs to change.
+            */}
+            <div className="mt-4 border-t border-rule pt-4">
+              <label className="block">
+                <span className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+                  tell Reachly what to change
+                </span>
+                <textarea
+                  value={instruction}
+                  onChange={(event) => setInstruction(event.target.value)}
+                  rows={2}
+                  maxLength={500}
+                  placeholder="shorter / lead with the transit project / less about the coursework / more direct"
+                  className="mt-1 w-full rounded-card border border-rule bg-paper px-3 py-2 text-[14px] text-ink placeholder:text-slate/60 focus:border-ink focus:outline-none"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => revise.mutate(instruction)}
+                disabled={busy || instruction.trim().length === 0}
+                className="mt-2 rounded-card border border-ink px-4 py-2 text-[15px] font-medium text-ink hover:bg-blueprint disabled:opacity-50"
+              >
+                {revise.isPending ? "Rewriting…" : "Rewrite it that way"}
+              </button>
+              {revise.isError && (
+                <p className="mt-2 font-receipt text-[11px] tracking-[0.02em] text-closed">
+                  {(revise.error as ApiError)?.message ?? "That rewrite could not be produced."}
+                </p>
+              )}
             </div>
             <p className="mt-2 font-receipt text-[11px] leading-[1.6] text-slate">
               Reachly never sends this. It opens in your own mail client, from your own address, and

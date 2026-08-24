@@ -331,6 +331,80 @@ class TestOnePipelinePerStudent:
         ).status_code == 401
 
 
+class TestAskingAboutOnePosting:
+    """The posting page asks this on every visit, so the untracked answer must be ordinary."""
+
+    async def test_an_untracked_posting_answers_null_rather_than_404(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        token, _ = await _student(session)
+        job = await _job(session, source_job_id="f1")
+        await session.commit()
+
+        response = await client.get(
+            f"/api/v1/applications/for-job/{job.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        assert response.json() is None
+
+    async def test_a_tracked_posting_returns_its_status(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        token, _ = await _student(session)
+        job = await _job(session, source_job_id="f2")
+        await session.commit()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.post(
+            "/api/v1/applications",
+            json={"job_id": job.id, "status": "interviewing"},
+            headers=headers,
+        )
+
+        response = await client.get(f"/api/v1/applications/for-job/{job.id}", headers=headers)
+
+        assert response.json()["status"] == "interviewing"
+        assert response.json()["job_id"] == job.id
+
+    async def test_the_literal_path_wins_over_the_id_route(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        """`/for-job/1` must not be read as application id "for-job" — the trap /parsed once hit."""
+        token, _ = await _student(session)
+        job = await _job(session, source_job_id="f3")
+        await session.commit()
+
+        response = await client.get(
+            f"/api/v1/applications/for-job/{job.id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+
+    async def test_it_does_not_leak_another_student_s_application(
+        self, client: AsyncClient, session: AsyncSession
+    ) -> None:
+        mine, _ = await _student(session, email="f-mine@example.test")
+        theirs, _ = await _student(session, email="f-theirs@example.test")
+        job = await _job(session, source_job_id="f4")
+        await session.commit()
+
+        await client.post(
+            "/api/v1/applications",
+            json={"job_id": job.id, "status": "offer"},
+            headers={"Authorization": f"Bearer {mine}"},
+        )
+
+        response = await client.get(
+            f"/api/v1/applications/for-job/{job.id}",
+            headers={"Authorization": f"Bearer {theirs}"},
+        )
+
+        assert response.json() is None
+
+
 class TestRemovingOne:
     async def test_untracking_removes_the_row(
         self, client: AsyncClient, session: AsyncSession

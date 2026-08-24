@@ -32,6 +32,15 @@ export const fetchOutreach = (jobId: number) =>
 export const rewriteOutreach = (jobId: number) =>
   api.post<Outreach>(`/api/v1/jobs/${jobId}/outreach/rewrite`, {});
 
+/**
+ * Rewrite it the way the student asked.
+ *
+ * The instruction changes what the writer aims for, never what it may claim — asking it to say you know
+ * Kubernetes is refused exactly as it would be in a first draft.
+ */
+export const reviseOutreach = (jobId: number, instruction: string) =>
+  api.post<Outreach>(`/api/v1/jobs/${jobId}/outreach/revise`, { instruction });
+
 export const outreachKeys = {
   outreach: (jobId: number) => ["outreach", jobId] as const,
 };

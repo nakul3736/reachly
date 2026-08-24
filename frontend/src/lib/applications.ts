@@ -55,6 +55,16 @@ export interface Pipeline {
 
 export const fetchPipeline = () => api.get<Pipeline>("/api/v1/applications");
 
+/**
+ * The single application for one posting, or null when it is not tracked.
+ *
+ * A dedicated request rather than filtering the pipeline client-side. The posting page would otherwise
+ * download every application to answer a question about one of them, and that cost grows with exactly
+ * the students who use the product most.
+ */
+export const fetchApplicationForJob = (jobId: number) =>
+  api.get<Application | null>(`/api/v1/applications/for-job/${jobId}`);
+
 export const trackJob = (jobId: number, status: ApplicationStatus = "saved") =>
   api.post<Application>("/api/v1/applications", { job_id: jobId, status });
 
@@ -67,4 +77,5 @@ export const untrack = (id: number) => api.del(`/api/v1/applications/${id}`);
 
 export const applicationKeys = {
   pipeline: ["applications"] as const,
+  forJob: (jobId: number) => ["applications", "for-job", jobId] as const,
 };

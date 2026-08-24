@@ -25,7 +25,7 @@ from app.domain.parsed_resume import (
     ParsedResume,
     ProjectEntry,
 )
-from app.services.outreach_service import write_outreach
+from app.services.outreach_service import revise_outreach, write_outreach
 
 RESUME = ParsedResume(
     summary="Computer science graduate.",
@@ -362,6 +362,159 @@ class TestWritingTheEmail:
 
         assert draft.written is False
         assert llm.calls == []
+
+class TestRevisingTheEmail:
+    """The asymmetry being closed: a bullet could be argued with, the email could only be rerolled."""
+
+    async def test_the_instruction_and_the_previous_draft_both_reach_the_writer(self) -> None:
+        llm = FakeLLM([{"subject": "Backend Engineer application", "body": GOOD_BODY}])
+
+        await revise_outreach(
+            instruction="Lead with the transit project and cut the last paragraph.",
+            previous_subject="Old subject",
+            previous_body="Old body about nothing in particular.",
+            student_name="Nakul Patel",
+            job_title="Backend Engineer",
+            company="Acme",
+            description=POSTING,
+            resume=RESUME,
+            matched_skills=["Python"],
+            llm=llm,
+        )
+
+        prompt = llm.calls[0]
+        assert "Lead with the transit project" in prompt
+        assert "Old body about nothing in particular." in prompt, "shorter means nothing without it"
+        assert "not claimable" in prompt, "the hard rules travel with the revision"
+
+    async def test_an_instruction_cannot_widen_what_may_be_claimed(self) -> None:
+        """"Say I know Kubernetes" is refused for the same reason a first draft would be."""
+        bad = GOOD_BODY.replace("Python and PostgreSQL", "Python, PostgreSQL and Kubernetes")
+        llm = FakeLLM([{"subject": "s", "body": bad}, {"subject": "s", "body": bad}])
+
+        draft = await revise_outreach(
+            instruction="Say I know Kubernetes, they clearly want it.",
+            previous_subject="Backend Engineer application",
+            previous_body=GOOD_BODY,
+            student_name="Nakul Patel",
+            job_title="Backend Engineer",
+            company="Acme",
+            description=POSTING,
+            resume=RESUME,
+            matched_skills=["Python", "PostgreSQL"],
+            llm=llm,
+        )
+
+        assert "Kubernetes" not in draft.body
+        assert draft.written is False, "two refusals, so the plain version is what they get"
+
+    async def test_a_valid_revision_is_returned_and_signed(self) -> None:
+        revised = GOOD_BODY.replace("Hi there,", "Hi,")
+        llm = FakeLLM([{"subject": "Backend Engineer — Transit Delay Tracker", "body": revised}])
+
+        draft = await revise_outreach(
+            instruction="Make the subject mention my project.",
+            previous_subject="Backend Engineer application",
+            previous_body=GOOD_BODY,
+            student_name="Nakul Patel",
+            job_title="Backend Engineer",
+            company="Acme",
+            description=POSTING,
+            resume=RESUME,
+            matched_skills=["Python", "PostgreSQL"],
+            llm=llm,
+        )
+
+        assert draft.written is True
+        assert draft.subject == "Backend Engineer — Transit Delay Tracker"
+        assert draft.body.strip().endswith("Nakul Patel")
+
+    async def test_revisions_are_judged_against_the_resume_not_the_previous_draft(self) -> None:
+        """Otherwise a claim could arrive by degrees across several polite revisions."""
+        llm = FakeLLM(
+            [
+                {
+                    "subject": "s",
+                    "body": GOOD_BODY.replace(
+                        "cleaned survey responses", "cleaned 12,000 survey responses"
+                    ),
+                },
+                {"subject": "s", "body": GOOD_BODY},
+            ]
+        )
+
+        draft = await revise_outreach(
+            instruction="Add a number to make it concrete.",
+            previous_subject="s",
+            # A previous draft that already contained the number would license it if the check ran
+            # against the draft. It runs against the resume, so it does not.
+            previous_body=GOOD_BODY.replace(
+                "cleaned survey responses", "cleaned 12,000 survey responses"
+            ),
+            student_name="Nakul Patel",
+            job_title="Backend Engineer",
+            company="Acme",
+            description=POSTING,
+            resume=RESUME,
+            matched_skills=["Python"],
+            llm=llm,
+        )
+
+        assert "12,000" not in draft.body
+        assert "added_number" in llm.calls[1], "and the student is told the number is the problem"
+
+    async def test_an_empty_instruction_does_not_spend_a_call(self) -> None:
+        llm = FakeLLM([{"subject": "s", "body": GOOD_BODY}])
+
+        draft = await revise_outreach(
+            instruction="   ",
+            previous_subject="s",
+            previous_body=GOOD_BODY,
+            student_name="Nakul Patel",
+            job_title="Backend Engineer",
+            company="Acme",
+            description=POSTING,
+            resume=RESUME,
+            matched_skills=["Python"],
+            llm=llm,
+        )
+
+        assert llm.calls == []
+        assert draft.written is False
+
+    async def test_the_first_draft_and_a_revision_permit_exactly_the_same_things(self) -> None:
+        """Shared generator, asserted — a revision path with weaker checks is how a fabrication lands."""
+        bad = GOOD_BODY.replace("at Dalhousie University", "at Shopify")
+
+        first = FakeLLM([{"subject": "s", "body": bad}, {"subject": "s", "body": bad}])
+        second = FakeLLM([{"subject": "s", "body": bad}, {"subject": "s", "body": bad}])
+
+        written = await write_outreach(
+            student_name="Nakul Patel",
+            job_title="Backend Engineer",
+            company="Acme",
+            description=POSTING,
+            resume=RESUME,
+            matched_skills=["Python"],
+            llm=first,
+        )
+        revised = await revise_outreach(
+            instruction="Mention where I worked.",
+            previous_subject="s",
+            previous_body=GOOD_BODY,
+            student_name="Nakul Patel",
+            job_title="Backend Engineer",
+            company="Acme",
+            description=POSTING,
+            resume=RESUME,
+            matched_skills=["Python"],
+            llm=second,
+        )
+
+        assert written.written is revised.written is False
+        assert "Shopify" not in written.body
+        assert "Shopify" not in revised.body
+        assert len(first.calls) == len(second.calls) == 2, "same attempt budget"
 
     async def test_the_evidence_describes_the_check_not_the_prompt(self) -> None:
         llm = FakeLLM([{"subject": "Backend Engineer application", "body": GOOD_BODY}])

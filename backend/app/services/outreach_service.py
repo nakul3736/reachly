@@ -212,14 +212,124 @@ async def write_outreach(
     # is absent on purpose - see validate_outreach.
     corpus = f"{evidence}\n{other_open_roles}"
 
+    return await _generate(
+        prompt=prompt,
+        corpus=corpus,
+        company=company,
+        job_title=job_title,
+        student_name=student_name,
+        matched_skills=matched_skills,
+        other_open_roles=other_open_roles,
+        fallback=assembled,
+        llm=llm,
+    )
+
+
+async def revise_outreach(
+    *,
+    instruction: str,
+    previous_subject: str,
+    previous_body: str,
+    student_name: str,
+    job_title: str,
+    company: str,
+    description: str,
+    resume: ParsedResume | None,
+    matched_skills: list[str],
+    other_open_roles: int = 0,
+    applied: bool = False,
+    llm: LLMClient | None = None,
+) -> OutreachDraft:
+    """Rewrite the email the way the student asked, and check it exactly as before.
+
+    The instruction is the student's ("shorter", "lead with the transit project", "less about the
+    dashboard"), and it changes only what the writer is aiming for. It cannot widen what the writer is
+    allowed to claim: validation still runs against the resume with the posting excluded, so "say I know
+    Kubernetes" is refused for the same reason the first draft would have been, and the refusal is
+    returned rather than hidden — the student learns the resume is the problem, which is actionable, and
+    can add it if it is true.
+
+    The previous draft is shown to the writer, because "make it shorter" is meaningless without it. The
+    validation target is still the resume, never the previous draft: comparing each revision against the
+    last one would let a claim arrive by degrees, which is the drift the tailoring loop is built to
+    prevent (`revise_bullets`). Every revision is judged against the evidence, however many are asked
+    for.
+    """
+    fallback = build_outreach_draft(
+        student_name=student_name,
+        job_title=job_title,
+        company=company,
+        matched_skills=matched_skills,
+        other_open_roles=other_open_roles,
+        applied=applied,
+    )
+
+    if llm is None or resume is None or not instruction.strip():
+        return fallback
+
+    evidence = _resume_evidence(resume)
+    if not evidence.strip():
+        return fallback
+
+    base = _prompt(
+        student_name=student_name,
+        job_title=job_title,
+        company=company,
+        description=description,
+        evidence=evidence,
+        matched_skills=matched_skills,
+        other_open_roles=other_open_roles,
+        applied=applied,
+    )
+    prompt = (
+        f"{base}\n\n"
+        f"YOUR PREVIOUS DRAFT:\nSubject: {previous_subject}\n\n{previous_body}\n\n"
+        f"WHAT THE GRADUATE WANTS CHANGED: {instruction.strip()}\n\n"
+        "Rewrite it accordingly. Their instruction changes what you aim for, not what you are allowed "
+        "to claim — every hard rule above still applies, and if the instruction asks for something the "
+        "resume does not support, write the closest version that is true instead of inventing it."
+    )
+
+    corpus = f"{evidence}\n{other_open_roles}"
+    return await _generate(
+        prompt=prompt,
+        corpus=corpus,
+        company=company,
+        job_title=job_title,
+        student_name=student_name,
+        matched_skills=matched_skills,
+        other_open_roles=other_open_roles,
+        fallback=fallback,
+        llm=llm,
+    )
+
+
+async def _generate(
+    *,
+    prompt: str,
+    corpus: str,
+    company: str,
+    job_title: str,
+    student_name: str,
+    matched_skills: list[str],
+    other_open_roles: int,
+    fallback: OutreachDraft,
+    llm: LLMClient,
+) -> OutreachDraft:
+    """One attempt, one retry naming what was caught, then the fallback.
+
+    Shared by the first draft and every revision so the two cannot drift apart in what they permit —
+    which is the failure that matters, since a revision path with weaker checks is exactly how a
+    fabrication would reach a student: ask once nicely, then ask again.
+    """
     rejection: tuple[OutreachRejection, str] | None = None
 
     for attempt in (1, 2):
         instruction = prompt
         if rejection is not None:
             reason, detail = rejection
-            # One retry, told exactly what was caught. Naming the offending phrase is what makes the
-            # second attempt worth a request: a bare "try again" reproduces the same sentence.
+            # Naming the offending phrase is what makes the second request worth spending: a bare "try
+            # again" reproduces the same sentence.
             instruction = (
                 f"{prompt}\n\nYour previous draft was rejected: {reason.value} ({detail}). "
                 "Remove it entirely and rewrite. Do not substitute a synonym."
@@ -229,7 +339,7 @@ async def write_outreach(
             reply = await llm.complete_json(system=_SYSTEM, user=instruction)
         except (LLMError, ValueError, KeyError, TypeError) as exc:
             logger.warning("outreach generation failed on attempt %s: %s", attempt, exc)
-            return assembled
+            return fallback
 
         payload = reply if isinstance(reply, dict) else {}
         subject = str(payload.get("subject") or "").strip()
@@ -253,7 +363,7 @@ async def write_outreach(
         rejection = (verdict.reason or OutreachRejection.EMPTY, verdict.detail)
         logger.info("outreach draft rejected: %s (%s)", rejection[0], rejection[1])
 
-    return assembled
+    return fallback
 
 
 def _named_skills(body: str, matched_skills: list[str]) -> list[str]:

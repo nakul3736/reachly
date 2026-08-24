@@ -10,8 +10,15 @@ import { Link, useParams } from "react-router-dom";
 
 import { Fact, ReceiptLine, VerificationChip } from "../components/Receipt";
 import { ScoreBar } from "../components/ScoreBar";
-import { type ApplicationStatus, applicationKeys, trackJob } from "../lib/applications";
-import { ApiError } from "../lib/auth";
+import {
+  STATUSES,
+  STATUS_LABEL,
+  type ApplicationStatus,
+  applicationKeys,
+  fetchApplicationForJob,
+  trackJob,
+} from "../lib/applications";
+import { ApiError, storedToken } from "../lib/auth";
 import { fetchJob, queryKeys } from "../lib/jobs";
 import { isStale, postedAge } from "../lib/time";
 
@@ -19,6 +26,7 @@ export default function JobDetailPage() {
   const { id } = useParams();
   const jobId = Number(id);
   const cache = useQueryClient();
+  const signedIn = storedToken() !== null;
 
   const job = useQuery({
     queryKey: queryKeys.job(jobId),
@@ -26,9 +34,24 @@ export default function JobDetailPage() {
     enabled: Number.isFinite(jobId),
   });
 
+  // The posting is public, so this must not run for a signed-out visitor — the client throws on a
+  // missing token before it ever reaches the network, which would surface as an error on a page that
+  // is working perfectly well.
+  const tracked = useQuery({
+    queryKey: applicationKeys.forJob(jobId),
+    queryFn: () => fetchApplicationForJob(jobId),
+    enabled: signedIn && Number.isFinite(jobId),
+    retry: false,
+  });
+
   const track = useMutation({
     mutationFn: (status: ApplicationStatus) => trackJob(jobId, status),
-    onSuccess: () => cache.invalidateQueries({ queryKey: applicationKeys.pipeline }),
+    onSuccess: (updated) => {
+      // Written straight into the cache this component reads, then the pipeline is invalidated. Without
+      // the first, the select would snap back to the old status until a refetch landed.
+      cache.setQueryData(applicationKeys.forJob(jobId), updated);
+      void cache.invalidateQueries({ queryKey: applicationKeys.pipeline });
+    },
   });
 
   return (
@@ -235,29 +258,61 @@ export default function JobDetailPage() {
             in their own tracker. So saying "I applied" is its own button.
           */}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => track.mutate("saved")}
-              disabled={track.isPending}
-              className="rounded-card border border-rule px-4 py-2 text-[15px] text-slate hover:border-ink hover:text-ink disabled:opacity-60"
-            >
-              Track this
-            </button>
-            <button
-              type="button"
-              onClick={() => track.mutate("applied")}
-              disabled={track.isPending}
-              className="rounded-card border border-rule px-4 py-2 text-[15px] text-slate hover:border-ink hover:text-ink disabled:opacity-60"
-            >
-              I applied
-            </button>
-            {track.isSuccess && (
-              <span className="font-receipt text-[11px] tracking-[0.02em] text-confirmed">
-                saved to{" "}
-                <Link to="/applications" className="underline underline-offset-2">
-                  my applications
+            {!signedIn ? (
+              <Link
+                to="/signin"
+                className="font-receipt text-[11px] tracking-[0.02em] text-slate underline decoration-rule underline-offset-2 hover:text-ink"
+              >
+                sign in to track this application
+              </Link>
+            ) : tracked.data ? (
+              // Already in the pipeline, so the question is no longer "track this?" but "where does
+              // it stand?". Offering Track this again would invite a second press that appears to do
+              // nothing, since the endpoint is idempotent on (student, posting).
+              <>
+                <label className="flex items-center gap-2">
+                  <span className="font-receipt text-[11px] tracking-[0.02em] text-slate">
+                    you marked this
+                  </span>
+                  <select
+                    value={tracked.data.status}
+                    disabled={track.isPending}
+                    onChange={(event) => track.mutate(event.target.value as ApplicationStatus)}
+                    className="rounded-card border border-rule bg-paper px-2 py-1 text-[14px] text-ink focus:border-ink focus:outline-none"
+                  >
+                    {STATUSES.map((status) => (
+                      <option key={status} value={status}>
+                        {STATUS_LABEL[status]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Link
+                  to="/applications"
+                  className="font-receipt text-[11px] tracking-[0.02em] text-slate underline decoration-rule underline-offset-2 hover:text-ink"
+                >
+                  in my applications
                 </Link>
-              </span>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => track.mutate("saved")}
+                  disabled={track.isPending}
+                  className="rounded-card border border-rule px-4 py-2 text-[15px] text-slate hover:border-ink hover:text-ink disabled:opacity-60"
+                >
+                  Track this
+                </button>
+                <button
+                  type="button"
+                  onClick={() => track.mutate("applied")}
+                  disabled={track.isPending}
+                  className="rounded-card border border-rule px-4 py-2 text-[15px] text-slate hover:border-ink hover:text-ink disabled:opacity-60"
+                >
+                  I applied
+                </button>
+              </>
             )}
             {track.isError && (
               <span className="font-receipt text-[11px] tracking-[0.02em] text-closed">

@@ -355,8 +355,23 @@ async def create_tailoring(
     )
 
     basis = "recorded" if settings.demo_mode else "live"
+    carried: list[str] = []
 
     if existing is None:
+        # No tailoring for *this* upload. Usually that means the student replaced their resume, and
+        # without carrying anything forward a one-character typo fix costs them every tick they had
+        # made — a cost with no purpose, since most bullets in the new upload are the same sentences.
+        #
+        # The transfer rule is character-identical text, not the same bullet id. Ids are derived from
+        # the *original* sentence, so an id surviving only proves the student did not edit that line;
+        # the rewrite is regenerated and generation is not deterministic, so the same id can now carry
+        # a different proposal. Approving text nobody has read is the one thing the whole approval
+        # mechanism exists to prevent, and it would fail silently — the document would simply contain
+        # a sentence the student never saw.
+        carried = await _carry_approvals(
+            session, student_id=student.id, job_id=job.id, current_resume_id=resume.id, payload=payload
+        )
+
         existing = TailoredResume(
             student_id=student.id,
             job_id=job.id,
@@ -366,6 +381,7 @@ async def create_tailoring(
             changed_count=result.changed_count,
             rejected_count=result.rejected_count,
             basis=basis,
+            approved_bullet_ids=carried,
         )
         session.add(existing)
     else:
@@ -379,6 +395,11 @@ async def create_tailoring(
         # payload rather than as a flag inside it. Every sentence here is newly generated; carrying a
         # tick across would mark text as approved that the student has never read, and the tick is
         # the one thing standing between a model's output and a document an employer receives.
+        #
+        # Deliberately not the carry-forward rule used above for a new upload. Reaching this branch
+        # means the student pressed "start over" on the same resume, having been shown how many
+        # approvals that discards and confirmed it. Quietly keeping some would break a promise the
+        # interface made in a dialog they had to dismiss.
         existing.approved_bullet_ids = []
 
     # Committed rather than flushed. `get_session` never commits, so a flush alone meant the
@@ -388,6 +409,67 @@ async def create_tailoring(
     await session.commit()
     await session.refresh(existing)
     return _to_response(job, existing, parsed=parsed, student=student, email=user.email)
+
+
+async def _carry_approvals(
+    session: AsyncSession,
+    *,
+    student_id: int,
+    job_id: int,
+    current_resume_id: int,
+    payload: list[dict[str, object]],
+) -> list[str]:
+    """Approvals from the previous upload's tailoring that still apply, by identical text.
+
+    Returns the subset of bullet ids that were approved against an earlier upload of the resume **and**
+    whose newly generated rewrite is character-for-character what the student approved. Anything else -
+    a changed rewrite, a rewrite that is now refused, a bullet that no longer exists - is dropped, so the
+    worst case is a tick the student has to make again, never a sentence they have not read.
+
+    Whitespace is not normalised and case is not folded. Both would be defensible for prose and neither
+    is defensible here: this is the exact string that will be printed on a document sent to an employer,
+    and "identical enough" is not a standard anybody would accept for that.
+    """
+    previous = (
+        (
+            await session.execute(
+                select(TailoredResume)
+                .where(
+                    TailoredResume.student_id == student_id,
+                    TailoredResume.job_id == job_id,
+                    TailoredResume.resume_master_id != current_resume_id,
+                )
+                .order_by(TailoredResume.created_at.desc())
+                .limit(1)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if previous is None or not previous.approved_bullet_ids:
+        return []
+
+    approved = set(previous.approved_bullet_ids)
+    was = {
+        str(bullet.get("bullet_id")): str(bullet.get("tailored") or "")
+        for bullet in (previous.bullets or [])
+        if str(bullet.get("bullet_id")) in approved
+    }
+
+    carried: list[str] = []
+    for bullet in payload:
+        bullet_id = str(bullet.get("bullet_id"))
+        if bullet_id not in was:
+            continue
+        # A refused rewrite can never be approved, here or anywhere else.
+        if bullet.get("rejected_reason"):
+            continue
+        if not bullet.get("changed"):
+            continue
+        if str(bullet.get("tailored") or "") == was[bullet_id]:
+            carried.append(bullet_id)
+
+    return carried
 
 
 @router.get("/{job_id}/tailor", response_model=TailoredResumeResponse)
