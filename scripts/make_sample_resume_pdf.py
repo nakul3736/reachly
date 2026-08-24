@@ -72,6 +72,19 @@ LATEX_LIKE: list[tuple[str, str]] = [
     ("F1", "Lakeside Robotics"),
     ("F1", f"{BULLET} Built an internal dashboard in React used by the support team."),
     ("F1", f"{BULLET} Migrated a legacy jQuery form to a typed React component."),
+    # Projects, because for most graduates this is the strongest material in the document and a
+    # demo resume without any cannot show the feature that reads them. Deliberately shaped like
+    # the rest of this layout - bullet glyph, date on the heading line - but with **no employer**,
+    # which is the structural difference that matters: nobody hired Alex to build these, and filing
+    # them under an employer would put a company on the resume that does not exist.
+    ("F2", "Projects"),
+    ("F2", "Transit Delay Tracker    2025"),
+    ("F1", f"{BULLET} Collected live transit updates into PostgreSQL and charted the"),
+    ("F1", "   delays by route in a React dashboard."),
+    ("F1", f"{BULLET} Wrote the ingestion as a scheduled job with retries."),
+    ("F2", "Course Planner    2024"),
+    ("F1", f"{BULLET} Built a FastAPI service that checks degree requirements against a"),
+    ("F1", "   student's completed courses."),
     ("F2", "Education"),
     ("F1", "Dalhousie University"),
     ("F1", "Bachelor of Computer Science, expected 2027"),

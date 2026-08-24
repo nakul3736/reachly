@@ -18,7 +18,10 @@ rejected options are kept deliberately, because the reasoning is the useful part
 | [0007](0007-external-scheduler.md) | The daily job runs from an external trigger | Accepted |
 | [0008](0008-hosting-for-a-judged-window.md) | Hosting chosen for uptime across a fixed judging window | Accepted |
 | [0009](0009-vendored-vs-global-skills.md) | Vendor the skills we use, once their licence is verified | Accepted |
-| [0010](0010-demo-mode-is-the-deployed-default.md) | The deployed app runs in demo mode, on a pinned model | Accepted |
+| [0010](0010-demo-mode-is-the-deployed-default.md) | The deployed app runs in demo mode, on a pinned model | Partly revised — the deployed API now runs live inference, because the two features worth judging are generative and serving recorded responses for them would mean nobody saw the real thing. Demo mode remains the local and test default. |
+| [0011](0011-model-assisted-skill-extraction.md) | Skills are extracted with a model, not a fixed vocabulary alone | Accepted |
+| [0012](0012-approval-loop-for-tailoring.md) | A suggestion is not a change: tailoring is an approval loop | Accepted |
+| [0013](0013-written-outreach-validated-afterwards.md) | The outreach email is written by a model and checked afterwards | Accepted — reverses the deterministic assembler decided earlier the same day |
 
 ## Spikes
 

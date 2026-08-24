@@ -58,6 +58,33 @@ _LATEX_LIKE: dict[str, Any] = {
             ],
         },
     ],
+    # No employer field, deliberately: nobody hired Alex to build these. The parse rejects an
+    # invented project name by dropping that entry rather than failing the whole resume, because a
+    # fabricated employer puts a nonexistent company on a document and a fabricated project title
+    # does not — the bullets underneath are still the student's own.
+    #
+    # The first bullet of each wraps in the PDF, so these strings are the joined form. That is the
+    # code most likely to be wrong, and keying the fixture on the joined text means demo mode
+    # exercises the whitespace-normalised evidence check rather than stepping around it.
+    "projects": [
+        {
+            "name": "Transit Delay Tracker",
+            "dates": "2025",
+            "bullets": [
+                "Collected live transit updates into PostgreSQL and charted the delays by "
+                "route in a React dashboard.",
+                "Wrote the ingestion as a scheduled job with retries.",
+            ],
+        },
+        {
+            "name": "Course Planner",
+            "dates": "2024",
+            "bullets": [
+                "Built a FastAPI service that checks degree requirements against a "
+                "student's completed courses.",
+            ],
+        },
+    ],
     "education": [
         {
             "institution": "Dalhousie University",

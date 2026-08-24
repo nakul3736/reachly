@@ -9,7 +9,7 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
 endobj
 4 0 obj
-<< /Length 1098 >>
+<< /Length 1574 >>
 stream
 BT
 14 TL
@@ -63,6 +63,30 @@ T*
 (\225 Migrated a legacy jQuery form to a typed React component.) Tj
 T*
 /F2 11 Tf
+(Projects) Tj
+T*
+/F2 11 Tf
+(Transit Delay Tracker    2025) Tj
+T*
+/F1 10 Tf
+(\225 Collected live transit updates into PostgreSQL and charted the) Tj
+T*
+/F1 10 Tf
+(   delays by route in a React dashboard.) Tj
+T*
+/F1 10 Tf
+(\225 Wrote the ingestion as a scheduled job with retries.) Tj
+T*
+/F2 11 Tf
+(Course Planner    2024) Tj
+T*
+/F1 10 Tf
+(\225 Built a FastAPI service that checks degree requirements against a) Tj
+T*
+/F1 10 Tf
+(   student's completed courses.) Tj
+T*
+/F2 11 Tf
 (Education) Tj
 T*
 /F1 10 Tf
@@ -87,10 +111,10 @@ xref
 0000000058 00000 n 
 0000000115 00000 n 
 0000000251 00000 n 
-0000001401 00000 n 
-0000001498 00000 n 
+0000001877 00000 n 
+0000001974 00000 n 
 trailer
 << /Size 7 /Root 1 0 R >>
 startxref
-1600
+2076
 %%EOF
