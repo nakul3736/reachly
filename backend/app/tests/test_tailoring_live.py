@@ -196,6 +196,17 @@ async def test_something_was_actually_improved() -> None:
 
     result = await tailor_resume(_RESUME, **friendly, llm=_live_client())
 
+    # An outage cannot demonstrate this either way, and until `unavailable` existed the two were
+    # indistinguishable here: a rate-limited run failed with a message accusing the validator of
+    # rejecting everything, which sent the reader looking for a bug in the wrong module. This is the
+    # same reasoning as the sibling test above, and it is exactly the confusion the flag was added to
+    # end — the difference is now visible in the interface too, not just in this file.
+    if all(outcome.unavailable for outcome in result.outcomes):
+        pytest.skip(
+            "the provider returned nothing (rate limit or outage), so this run cannot show whether "
+            "anything would have been improved — rerun rather than trusting a green"
+        )
+
     for outcome in result.outcomes:
         if outcome.changed:
             print(f"\n{outcome.bullet_id}\n  from: {outcome.original}\n  to:   {outcome.tailored}")
